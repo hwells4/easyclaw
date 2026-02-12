@@ -604,47 +604,6 @@ WRAPPER
     chown "$NEW_USER:$NEW_USER" "$OP_PATH" "$OP_REAL"
 }
 
-setup_openclaw_service() {
-    log "Creating OpenClaw gateway systemd service..."
-    local OPENCLAW_BIN
-    OPENCLAW_BIN=$(su - "$NEW_USER" -c "which openclaw" 2>/dev/null || echo "/home/$NEW_USER/.local/bin/openclaw")
-    cat > /etc/systemd/system/openclaw-gateway.service << EOF
-[Unit]
-Description=OpenClaw Gateway
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=$NEW_USER
-WorkingDirectory=/home/$NEW_USER
-EnvironmentFile=-/etc/openclaw-secrets
-Environment=PATH=/home/$NEW_USER/.local/bin:/home/$NEW_USER/.bun/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=$OPENCLAW_BIN gateway start --foreground
-Restart=always
-RestartSec=3
-StartLimitIntervalSec=300
-StartLimitBurst=5
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/home/$NEW_USER/.openclaw /home/$NEW_USER/.config
-PrivateTmp=yes
-ProtectKernelTunables=yes
-ProtectControlGroups=yes
-SyslogIdentifier=openclaw-gateway
-TimeoutStartSec=30
-TimeoutStopSec=30
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    systemctl daemon-reload
-    systemctl enable openclaw-gateway
-    systemctl start openclaw-gateway
-    log "OpenClaw gateway service created and started"
-}
-
 setup_tmp_cleanup() {
     log "Installing /tmp cleanup cron..."
     local SCRIPT_DIR
@@ -715,12 +674,11 @@ server_main() {
     echo "  OpenClaw will now ask for your API keys."
     echo "  Follow the prompts."
     echo ""
-    su - "$NEW_USER" -c "openclaw onboard" || warn "openclaw onboard exited non-zero — continuing"
+    su - "$NEW_USER" -c "openclaw onboard --install-daemon" || warn "openclaw onboard exited non-zero — continuing"
 
-    # Post-onboarding
+    # Post-onboarding extras
     setup_secrets_file
     install_op_audit_wrapper
-    setup_openclaw_service
 
     log "Running OpenClaw security audit..."
     su - "$NEW_USER" -c "openclaw security audit --fix" || warn "Security audit returned non-zero"
