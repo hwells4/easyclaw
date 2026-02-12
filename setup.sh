@@ -641,7 +641,8 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
     systemctl enable openclaw-gateway
-    log "OpenClaw gateway service created"
+    systemctl start openclaw-gateway
+    log "OpenClaw gateway service created and started"
 }
 
 setup_tmp_cleanup() {
