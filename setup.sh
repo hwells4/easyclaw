@@ -220,18 +220,46 @@ run_wizard_local() {
     echo -e "${GREEN}║   One command. Secure OpenClaw server.   ║${NC}"
     echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
     echo ""
-    echo "  This wizard will create a server, harden it, and install"
-    echo "  OpenClaw — all from right here. Takes about 10 minutes."
+    echo "  This wizard will:"
+    echo ""
+    echo "    1. Create a cloud server for you on Hetzner"
+    echo "    2. Secure it (firewall, brute-force protection, encrypted access)"
+    echo "    3. Install OpenClaw and start it up"
+    echo ""
+    echo "  The whole thing takes about 10 minutes. You just follow the prompts."
+    echo ""
+    echo "  Hetzner is the cloud provider that hosts your server."
+    echo "  You'll need a Hetzner account and an API key to continue."
+    echo "  Servers start at ~\$4/month and you can delete anytime."
     echo ""
 
-    # ── Hetzner API token ──
-    step "Hetzner Cloud"
+    # ── Hetzner API key ──
+    step "Hetzner API Key"
 
-    echo "  You need a Hetzner Cloud API token."
-    echo "  Get one at: https://console.hetzner.cloud/"
-    echo "    → Pick a project → Security → API Tokens → Generate"
+    if ! ask_yes_no "Do you have your Hetzner API key ready?" "y"; then
+        echo ""
+        echo "  No problem! Here's how to get one:"
+        echo ""
+        echo "  ${BOLD}1.${NC} Go to ${BLUE}https://console.hetzner.cloud/${NC}"
+        echo "     Create a free account if you don't have one."
+        echo ""
+        echo "  ${BOLD}2.${NC} Once logged in, create a new Project (or use the default one)."
+        echo ""
+        echo "  ${BOLD}3.${NC} Inside your project, click ${BOLD}Security${NC} in the left sidebar."
+        echo ""
+        echo "  ${BOLD}4.${NC} Click the ${BOLD}API Tokens${NC} tab, then ${BOLD}Generate API Token${NC}."
+        echo ""
+        echo "  ${BOLD}5.${NC} Give it a name (like \"easyclaw\"), select ${BOLD}Read & Write${NC} access,"
+        echo "     and click Generate."
+        echo ""
+        echo "  ${BOLD}6.${NC} ${YELLOW}Copy the token now${NC} — you won't be able to see it again."
+        echo ""
+
+        echo -en "  Ready to continue? Press Enter when you have your token... "
+        read -r
+    fi
+
     echo ""
-
     while [ -z "$HETZNER_TOKEN" ]; do
         echo -en "  Paste your Hetzner API token: "
         read -rs HETZNER_TOKEN
@@ -242,12 +270,14 @@ run_wizard_local() {
     done
 
     # Validate token
+    echo -en "  Checking token... "
     local test_response
     test_response=$(hetzner_api GET /servers 2>/dev/null || true)
     if echo "$test_response" | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'servers' in d" 2>/dev/null; then
-        log "API token valid!"
+        echo -e "${GREEN}valid!${NC}"
     else
-        error "Invalid API token. Check it and try again."
+        echo -e "${RED}invalid${NC}"
+        error "That token didn't work. Double-check it and run the script again."
     fi
 
     # ── Server size ──
