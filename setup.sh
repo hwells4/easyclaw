@@ -582,6 +582,13 @@ install_node() {
     log "Installing Node.js 22..."
     quiet "Adding Node.js repository" bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -"
     quiet "Installing Node.js" apt-get install -y nodejs
+
+    # Set up npm global prefix so claw user can `npm install -g` without root
+    su - "$NEW_USER" -c 'mkdir -p ~/.npm-global && npm config set prefix ~/.npm-global' >> "$SETUP_LOG" 2>&1
+    if ! grep -q 'npm-global' "/home/$NEW_USER/.bashrc" 2>/dev/null; then
+        echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> "/home/$NEW_USER/.bashrc"
+    fi
+
     log "Node.js $(node --version) installed"
 }
 
@@ -603,7 +610,9 @@ install_docker() {
 }
 
 install_claude_code() {
-    quiet "Installing Claude Code" su - "$NEW_USER" -c 'curl -fsSL https://claude.ai/install.sh | bash' || warn "Claude Code install failed — install manually later"
+    curl -fsSL https://claude.ai/install.sh -o /tmp/claude-install.sh
+    quiet "Installing Claude Code" su - "$NEW_USER" -c "bash /tmp/claude-install.sh" || warn "Claude Code install failed — install manually later"
+    rm -f /tmp/claude-install.sh
 }
 
 install_codex() {
