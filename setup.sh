@@ -444,8 +444,10 @@ create_user() {
     fi
     useradd -m -s /bin/bash "$NEW_USER"
     usermod -aG sudo "$NEW_USER"
-    # No password prompt — SSH key auth only
-    log "User $NEW_USER created (SSH key auth, no password)"
+    # Passwordless sudo — no password was set (SSH key auth only)
+    echo "$NEW_USER ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/$NEW_USER"
+    chmod 440 "/etc/sudoers.d/$NEW_USER"
+    log "User $NEW_USER created (SSH key auth, passwordless sudo)"
 }
 
 setup_ssh_hardening() {
@@ -543,7 +545,9 @@ EOF
 install_homebrew() {
     log "Installing Homebrew (this takes a couple minutes)..."
     if command -v brew &>/dev/null; then warn "Already installed"; return; fi
-    quiet "Downloading Homebrew" env NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh -o /tmp/brew-install.sh
+    quiet "Installing Homebrew" env NONINTERACTIVE=1 /bin/bash /tmp/brew-install.sh
+    rm -f /tmp/brew-install.sh
     if ! grep -q 'linuxbrew' /root/.bashrc 2>/dev/null; then
         echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /root/.bashrc
     fi
@@ -706,11 +710,11 @@ server_main() {
     setup_auto_updates
 
     # Package managers & tools
-    install_homebrew
+    install_homebrew || warn "Homebrew install failed — skipping (not required for OpenClaw)"
     install_node
-    [ "$INSTALL_DOCKER" = true ] && install_docker
-    [ "$INSTALL_CLAUDE_CODE" = true ] && install_claude_code
-    [ "$INSTALL_CODEX" = true ] && install_codex
+    [ "$INSTALL_DOCKER" = true ] && install_docker || warn "Docker install failed — skipping"
+    [ "$INSTALL_CLAUDE_CODE" = true ] && install_claude_code || true
+    [ "$INSTALL_CODEX" = true ] && install_codex || true
 
     # Cleanup
     setup_tmp_cleanup
