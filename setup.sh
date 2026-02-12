@@ -42,10 +42,25 @@ OPENCLAW_CONFIG="${OPENCLAW_CONFIG:-}"
 SERVER_IP=""
 EASYCLAW_SSH_KEY="$HOME/.ssh/easyclaw_ed25519"
 
+SETUP_LOG="/var/log/easyclaw-setup.log"
+
 log() { echo -e "${GREEN}[easyclaw]${NC} $1"; }
 warn() { echo -e "${YELLOW}[warn]${NC} $1"; }
 error() { echo -e "${RED}[error]${NC} $1"; exit 1; }
 step() { echo -e "\n${BLUE}${BOLD}── $1 ──${NC}\n"; }
+
+# Run a command quietly — show a one-line status, log full output to file
+quiet() {
+    local label="$1"; shift
+    echo -en "  ${label}... "
+    if "$@" >> "$SETUP_LOG" 2>&1; then
+        echo -e "${GREEN}done${NC}"
+    else
+        echo -e "${RED}failed${NC}"
+        echo "  See $SETUP_LOG for details"
+        return 1
+    fi
+}
 
 ask_yes_no() {
     local prompt="$1" default="${2:-y}"
@@ -381,10 +396,10 @@ check_root() {
 }
 
 update_system() {
-    log "Updating system packages..."
-    apt-get update
-    apt-get upgrade -y
-    apt-get install -y \
+    log "Updating system packages (this takes a few minutes)..."
+    quiet "Updating package lists" apt-get update
+    quiet "Upgrading installed packages" apt-get upgrade -y
+    quiet "Installing required packages" apt-get install -y \
         curl wget git vim htop tmux ufw fail2ban \
         software-properties-common apt-transport-https \
         ca-certificates gnupg lsb-release build-essential \
@@ -415,7 +430,7 @@ MaxAuthTries 3
 ClientAliveInterval 300
 ClientAliveCountMax 2
 EOF
-    if sshd -t; then
+    if sshd -t >> "$SETUP_LOG" 2>&1; then
         # Ubuntu 24.04 uses "ssh", older versions use "sshd"
         systemctl restart ssh 2>/dev/null || systemctl restart sshd
         log "SSH hardened. Root login disabled, key auth only."
@@ -425,15 +440,17 @@ EOF
 }
 
 setup_firewall() {
-    log "Configuring UFW firewall..."
-    ufw default deny incoming
-    ufw default allow outgoing
-    ufw allow "$SSH_PORT/tcp"
-    ufw allow 80/tcp
-    ufw allow 443/tcp
-    ufw allow "$OPENCLAW_PORT/tcp"
-    ufw --force enable
-    log "Firewall enabled. Allowed: SSH ($SSH_PORT), HTTP/S, OpenClaw ($OPENCLAW_PORT)"
+    log "Configuring firewall..."
+    {
+        ufw default deny incoming
+        ufw default allow outgoing
+        ufw allow "$SSH_PORT/tcp"
+        ufw allow 80/tcp
+        ufw allow 443/tcp
+        ufw allow "$OPENCLAW_PORT/tcp"
+        ufw --force enable
+    } >> "$SETUP_LOG" 2>&1
+    log "Firewall enabled"
 }
 
 setup_fail2ban() {
@@ -451,9 +468,9 @@ filter = sshd
 logpath = /var/log/auth.log
 maxretry = 3
 EOF
-    systemctl enable fail2ban
-    systemctl start fail2ban
-    log "Fail2ban configured"
+    systemctl enable fail2ban >> "$SETUP_LOG" 2>&1
+    systemctl start fail2ban >> "$SETUP_LOG" 2>&1
+    log "Brute-force protection enabled"
 }
 
 setup_swap() {
@@ -470,17 +487,17 @@ setup_swap() {
         fallocate -l "${SWAP_SIZE_MB}M" /swapfile.img
         chmod 0600 /swapfile.img
     fi
-    mkswap /swapfile.img
-    swapon /swapfile.img
+    mkswap /swapfile.img >> "$SETUP_LOG" 2>&1
+    swapon /swapfile.img >> "$SETUP_LOG" 2>&1
     grep -q '/swapfile.img' /etc/fstab || echo '/swapfile.img none swap sw 0 0' >> /etc/fstab
-    sysctl vm.swappiness=10
+    sysctl vm.swappiness=10 >> "$SETUP_LOG" 2>&1
     grep -q 'vm.swappiness' /etc/sysctl.conf || echo 'vm.swappiness=10' >> /etc/sysctl.conf
-    log "${SWAP_SIZE_MB}MB swap configured (swappiness=10)"
+    log "Swap configured (${SWAP_SIZE_MB}MB)"
 }
 
 setup_auto_updates() {
     log "Enabling automatic security updates..."
-    apt-get install -y unattended-upgrades
+    quiet "Installing auto-update tools" apt-get install -y unattended-upgrades
     cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'EOF'
 Unattended-Upgrade::Allowed-Origins {
     "${distro_id}:${distro_codename}-security";
@@ -488,15 +505,15 @@ Unattended-Upgrade::Allowed-Origins {
 Unattended-Upgrade::Automatic-Reboot "false";
 Unattended-Upgrade::Remove-Unused-Dependencies "true";
 EOF
-    systemctl enable unattended-upgrades
-    systemctl start unattended-upgrades
+    systemctl enable unattended-upgrades >> "$SETUP_LOG" 2>&1
+    systemctl start unattended-upgrades >> "$SETUP_LOG" 2>&1
     log "Auto-updates enabled"
 }
 
 install_homebrew() {
-    log "Installing Homebrew..."
+    log "Installing Homebrew (this takes a couple minutes)..."
     if command -v brew &>/dev/null; then warn "Already installed"; return; fi
-    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    quiet "Downloading Homebrew" env NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     if ! grep -q 'linuxbrew' /root/.bashrc 2>/dev/null; then
         echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /root/.bashrc
     fi
@@ -505,53 +522,53 @@ install_homebrew() {
         echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> "/home/$NEW_USER/.bashrc"
     fi
     chown "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.bashrc"
-    brew install gcc
+    quiet "Installing compiler tools" brew install gcc
     log "Homebrew installed"
 }
 
 install_node() {
     log "Installing Node.js 22..."
-    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-    apt-get install -y nodejs
+    quiet "Adding Node.js repository" bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -"
+    quiet "Installing Node.js" apt-get install -y nodejs
     log "Node.js $(node --version) installed"
 }
 
 install_docker() {
     log "Installing Docker..."
     if command -v docker &>/dev/null; then warn "Already installed"; return; fi
-    apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
-    install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    chmod a+r /etc/apt/keyrings/docker.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-    apt-get update
-    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    {
+        apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
+        install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        chmod a+r /etc/apt/keyrings/docker.gpg
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+        apt-get update
+    } >> "$SETUP_LOG" 2>&1
+    quiet "Installing Docker packages" apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
     usermod -aG docker "$NEW_USER"
-    systemctl enable docker && systemctl start docker
+    systemctl enable docker >> "$SETUP_LOG" 2>&1 && systemctl start docker >> "$SETUP_LOG" 2>&1
     log "Docker installed"
 }
 
 install_claude_code() {
-    log "Installing Claude Code..."
-    su - "$NEW_USER" -c 'curl -fsSL https://claude.ai/install.sh | bash' || warn "Claude Code install failed — install manually later"
+    quiet "Installing Claude Code" su - "$NEW_USER" -c 'curl -fsSL https://claude.ai/install.sh | bash' || warn "Claude Code install failed — install manually later"
 }
 
 install_codex() {
-    log "Installing Codex..."
-    su - "$NEW_USER" -c "npm install -g @openai/codex" || warn "Codex install failed — install manually later"
+    quiet "Installing Codex" su - "$NEW_USER" -c "npm install -g @openai/codex" || warn "Codex install failed — install manually later"
 }
 
 install_openclaw_deps() {
     log "Installing OpenClaw dependencies..."
-    su - "$NEW_USER" -c 'curl -fsSL https://bun.sh/install | bash'
+    quiet "Installing Bun runtime" su - "$NEW_USER" -c 'curl -fsSL https://bun.sh/install | bash'
     if ! grep -q '\.bun/bin' "/home/$NEW_USER/.bashrc" 2>/dev/null; then
         echo 'export PATH="$HOME/.bun/bin:$PATH"' >> "/home/$NEW_USER/.bashrc"
     fi
 }
 
 install_openclaw() {
-    log "Installing OpenClaw (as $NEW_USER)..."
-    su - "$NEW_USER" -c "npm install -g openclaw"
+    log "Installing OpenClaw..."
+    quiet "Downloading OpenClaw" su - "$NEW_USER" -c "npm install -g openclaw"
     mkdir -p "/home/$NEW_USER/.config/openclaw"
     chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.config"
     if [ -n "$OPENCLAW_CONFIG" ] && [ -f "$OPENCLAW_CONFIG" ]; then
@@ -633,7 +650,12 @@ setup_tmp_cleanup() {
 server_main() {
     check_root
 
+    # Send noisy package manager output here instead of the terminal
+    mkdir -p "$(dirname "$SETUP_LOG")"
+    : > "$SETUP_LOG"
+
     log "Starting EasyClaw server setup..."
+    log "Full install log: $SETUP_LOG"
 
     # System hardening
     update_system
