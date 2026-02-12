@@ -77,26 +77,23 @@ hetzner_api() {
 setup_ssh_key() {
     step "SSH Key"
 
-    # Check for existing key
+    # Explicit key path takes priority (user knows what they're doing)
     if [ -n "$SSH_KEY_PATH" ] && [ -f "$SSH_KEY_PATH" ]; then
         log "Using provided SSH key: $SSH_KEY_PATH"
         EASYCLAW_SSH_KEY="$SSH_KEY_PATH"
         return
     fi
 
-    # Check for common existing keys
-    for key in "$HOME/.ssh/id_ed25519" "$HOME/.ssh/id_rsa" "$HOME/.ssh/easyclaw_ed25519"; do
-        if [ -f "$key" ] && [ -f "${key}.pub" ]; then
-            echo "  Found existing SSH key: $key"
-            if ask_yes_no "Use this key?" "y"; then
-                EASYCLAW_SSH_KEY="$key"
-                return
-            fi
+    # Reuse existing EasyClaw key if one exists (it's already dedicated to us)
+    if [ -f "$EASYCLAW_SSH_KEY" ] && [ -f "${EASYCLAW_SSH_KEY}.pub" ]; then
+        log "Found existing EasyClaw key: $EASYCLAW_SSH_KEY"
+        if ask_yes_no "Use this key?" "y"; then
+            return
         fi
-    done
+    fi
 
-    # Generate a new key
-    log "Generating new SSH key..."
+    # Generate a dedicated key — never reuse id_ed25519/id_rsa
+    log "Generating dedicated SSH key for EasyClaw..."
     ssh-keygen -t ed25519 -f "$EASYCLAW_SSH_KEY" -N "" -C "easyclaw-$(date +%Y%m%d)"
     log "Created: $EASYCLAW_SSH_KEY"
 }
