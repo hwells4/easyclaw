@@ -260,6 +260,8 @@ run_wizard_local() {
     fi
 
     echo ""
+    echo "  Your token is only used during this setup and is never saved to disk."
+    echo ""
     while [ -z "$HETZNER_TOKEN" ]; do
         echo -en "  Paste your Hetzner API token: "
         read -rs HETZNER_TOKEN
@@ -269,13 +271,12 @@ run_wizard_local() {
         fi
     done
 
-    # Validate token
-    echo -en "  Checking token... "
+    # Validate token — show feedback immediately so user knows it's working
+    echo -en "  Checking token with Hetzner... "
     local test_response
     test_response=$(hetzner_api GET /servers 2>/dev/null || true)
     if echo "$test_response" | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'servers' in d" 2>/dev/null; then
         echo -e "${GREEN}valid!${NC}"
-        echo "  Your token is only used during this setup and is never saved to disk."
     else
         echo -e "${RED}invalid${NC}"
         error "That token didn't work. Double-check it and run the script again."
