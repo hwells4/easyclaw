@@ -107,4 +107,4 @@ sudo cat /etc/openclaw-secrets
 
 ## License
 
-MIT — Copyright (c) 2026 Dodo Digital
+[PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0) — Copyright (c) 2026 Dodo Digital
