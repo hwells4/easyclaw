@@ -439,7 +439,7 @@ update_system() {
     quiet "Updating package lists" apt-get update
     quiet "Upgrading installed packages" apt-get upgrade -y
     quiet "Installing required packages" apt-get install -y \
-        curl wget git vim htop tmux ufw fail2ban \
+        curl wget git vim htop tmux ufw fail2ban unzip \
         software-properties-common apt-transport-https \
         ca-certificates gnupg lsb-release build-essential \
         python3 python3-pip python3-venv
