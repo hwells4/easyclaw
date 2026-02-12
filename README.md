@@ -1,6 +1,6 @@
 # EasyClaw
 
-One command to launch your own AI assistant server. Run it from your laptop — it creates the server, secures it, and installs [OpenClaw](https://github.com/openclaw/openclaw) for you.
+One command to launch your own AI assistant server. Run it from your laptop and it creates the server, secures it, and installs [OpenClaw](https://github.com/openclaw/openclaw) for you.
 
 ## What You Need Before Starting
 
