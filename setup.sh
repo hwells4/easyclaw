@@ -236,51 +236,58 @@ run_wizard_local() {
     # ── Hetzner API key ──
     step "Hetzner API Key"
 
-    if ! ask_yes_no "Do you have your Hetzner API key ready?" "y"; then
-        echo ""
-        echo "  No problem! Here's how to get one:"
-        echo ""
-        echo "  ${BOLD}1.${NC} Go to ${BLUE}https://console.hetzner.cloud/${NC}"
-        echo "     Create a free account if you don't have one."
-        echo ""
-        echo "  ${BOLD}2.${NC} Once logged in, create a new Project (or use the default one)."
-        echo ""
-        echo "  ${BOLD}3.${NC} Inside your project, click ${BOLD}Security${NC} in the left sidebar."
-        echo ""
-        echo "  ${BOLD}4.${NC} Click the ${BOLD}API Tokens${NC} tab, then ${BOLD}Generate API Token${NC}."
-        echo ""
-        echo "  ${BOLD}5.${NC} Give it a name (like \"easyclaw\"), select ${BOLD}Read & Write${NC} access,"
-        echo "     and click Generate."
-        echo ""
-        echo "  ${BOLD}6.${NC} ${YELLOW}Copy the token now${NC} — you won't be able to see it again."
-        echo ""
+    local token_valid=false
+    while [ "$token_valid" = false ]; do
+        if ! ask_yes_no "Do you have your Hetzner API key ready?" "y"; then
+            echo ""
+            echo "  No problem! Here's how to get one:"
+            echo ""
+            echo "  ${BOLD}1.${NC} Go to ${BLUE}https://console.hetzner.cloud/${NC}"
+            echo "     Create a free account if you don't have one."
+            echo ""
+            echo "  ${BOLD}2.${NC} Once logged in, create a new Project (or use the default one)."
+            echo ""
+            echo "  ${BOLD}3.${NC} Inside your project, click ${BOLD}Security${NC} in the left sidebar."
+            echo ""
+            echo "  ${BOLD}4.${NC} Click the ${BOLD}API Tokens${NC} tab, then ${BOLD}Generate API Token${NC}."
+            echo ""
+            echo "  ${BOLD}5.${NC} Give it a name (like \"easyclaw\"), select ${BOLD}Read & Write${NC} access,"
+            echo "     and click Generate."
+            echo ""
+            echo "  ${BOLD}6.${NC} ${YELLOW}Copy the token now${NC} — you won't be able to see it again."
+            echo ""
 
-        echo -en "  Ready to continue? Press Enter when you have your token... "
-        read -r
-    fi
+            echo -en "  Ready to continue? Press Enter when you have your token... "
+            read -r
+        fi
 
-    echo ""
-    echo "  Your token is only used during this setup and is never saved to disk."
-    echo ""
-    while [ -z "$HETZNER_TOKEN" ]; do
-        echo -en "  Paste your Hetzner API token: "
-        read -rs HETZNER_TOKEN
         echo ""
-        if [ -z "$HETZNER_TOKEN" ]; then
-            echo "  Token can't be empty."
+        echo "  Your token is only used during this setup and is never saved to disk."
+        echo ""
+        HETZNER_TOKEN=""
+        while [ -z "$HETZNER_TOKEN" ]; do
+            echo -en "  Paste your Hetzner API token: "
+            read -rs HETZNER_TOKEN
+            echo ""
+            if [ -z "$HETZNER_TOKEN" ]; then
+                echo "  Token can't be empty."
+            fi
+        done
+
+        # Validate token
+        echo -en "  Checking token with Hetzner... "
+        local test_response
+        test_response=$(hetzner_api GET /servers 2>/dev/null || true)
+        if echo "$test_response" | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'servers' in d" 2>/dev/null; then
+            echo -e "${GREEN}valid!${NC}"
+            token_valid=true
+        else
+            echo -e "${RED}invalid${NC}"
+            echo ""
+            echo "  That token didn't work. Let's try again."
+            echo ""
         fi
     done
-
-    # Validate token — show feedback immediately so user knows it's working
-    echo -en "  Checking token with Hetzner... "
-    local test_response
-    test_response=$(hetzner_api GET /servers 2>/dev/null || true)
-    if echo "$test_response" | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'servers' in d" 2>/dev/null; then
-        echo -e "${GREEN}valid!${NC}"
-    else
-        echo -e "${RED}invalid${NC}"
-        error "That token didn't work. Double-check it and run the script again."
-    fi
 
     # ── Server size ──
     step "Server Size"
