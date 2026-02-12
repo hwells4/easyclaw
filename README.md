@@ -92,10 +92,6 @@ All environment variables:
 | CPX31 | 16 GB | 4 | ~$10 |
 | CPX41 | 16 GB | 8 | ~$15 |
 
-## Terraform
-
-The `terraform/` directory is also available for infrastructure-as-code provisioning on Hetzner. See [`terraform/README.md`](terraform/README.md).
-
 ## Troubleshooting
 
 **Can't SSH after setup?** The script disables root login. Use the SSH command printed at the end, or access via Hetzner web console and run:
