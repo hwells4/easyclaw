@@ -39,7 +39,7 @@ You don't need to create a server manually. You don't need to set up SSH keys. E
 - Node.js 22, Homebrew, Bun
 - OpenClaw + systemd gateway service
 - Daily /tmp cleanup cron
-- SECURITY.md agent boundaries
+- [ACIP](https://github.com/Dicklesworthstone/acip) prompt injection defense (SECURITY.md)
 
 **Optional (wizard asks):**
 - Docker
