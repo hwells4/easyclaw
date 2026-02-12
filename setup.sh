@@ -201,21 +201,6 @@ run_remote_setup() {
         "NEW_USER=$NEW_USER INSTALL_DOCKER=$INSTALL_DOCKER INSTALL_CLAUDE_CODE=$INSTALL_CLAUDE_CODE INSTALL_CODEX=$INSTALL_CODEX bash /tmp/easyclaw-setup.sh --on-server"
 }
 
-setup_remote_ssh_access() {
-    # Copy the SSH key to the new user account so they can log in directly
-    log "Setting up SSH access for user $NEW_USER..."
-
-    ssh -i "$EASYCLAW_SSH_KEY" -o StrictHostKeyChecking=no root@"$SERVER_IP" "
-        mkdir -p /home/$NEW_USER/.ssh
-        cp /root/.ssh/authorized_keys /home/$NEW_USER/.ssh/authorized_keys
-        chown -R $NEW_USER:$NEW_USER /home/$NEW_USER/.ssh
-        chmod 700 /home/$NEW_USER/.ssh
-        chmod 600 /home/$NEW_USER/.ssh/authorized_keys
-    "
-
-    log "SSH access configured for $NEW_USER"
-}
-
 run_wizard_local() {
     echo ""
     echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
@@ -384,7 +369,6 @@ local_main() {
     create_hetzner_server
     wait_for_server
     run_remote_setup
-    setup_remote_ssh_access
 
     print_final_summary
 }
@@ -696,6 +680,15 @@ server_main() {
     # System hardening
     update_system
     create_user
+
+    # Copy SSH keys to new user BEFORE hardening disables root login
+    log "Setting up SSH access for $NEW_USER..."
+    mkdir -p "/home/$NEW_USER/.ssh"
+    cp /root/.ssh/authorized_keys "/home/$NEW_USER/.ssh/authorized_keys"
+    chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.ssh"
+    chmod 700 "/home/$NEW_USER/.ssh"
+    chmod 600 "/home/$NEW_USER/.ssh/authorized_keys"
+
     setup_ssh_hardening
     setup_firewall
     setup_fail2ban
