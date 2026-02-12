@@ -542,6 +542,42 @@ EOF
     log "Auto-updates enabled"
 }
 
+install_homebrew() {
+    log "Installing Homebrew (this takes a couple minutes)..."
+    if su - "$NEW_USER" -c 'command -v brew' &>/dev/null; then log "Already installed"; return; fi
+
+    # Download installer to file
+    curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh -o /tmp/brew-install.sh
+    chmod +r /tmp/brew-install.sh
+
+    # Homebrew REFUSES to run as root — must install as the claw user
+    echo -en "  Installing Homebrew... "
+    if su - "$NEW_USER" -c "NONINTERACTIVE=1 /bin/bash /tmp/brew-install.sh" >> "$SETUP_LOG" 2>&1; then
+        echo -e "${GREEN}done${NC}"
+    else
+        echo -e "${RED}failed${NC}"
+        echo "  Check $SETUP_LOG for details"
+        rm -f /tmp/brew-install.sh
+        error "Homebrew is required for OpenClaw plugins. Cannot continue."
+    fi
+    rm -f /tmp/brew-install.sh
+
+    # Set up PATH for the claw user's shell
+    if ! grep -q 'linuxbrew' "/home/$NEW_USER/.bashrc" 2>/dev/null; then
+        echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> "/home/$NEW_USER/.bashrc"
+        chown "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.bashrc"
+    fi
+
+    echo -en "  Installing compiler tools... "
+    if su - "$NEW_USER" -c 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" && brew install gcc' >> "$SETUP_LOG" 2>&1; then
+        echo -e "${GREEN}done${NC}"
+    else
+        echo -e "${RED}failed (non-critical)${NC}"
+    fi
+
+    log "Homebrew installed"
+}
+
 install_node() {
     log "Installing Node.js 22..."
     quiet "Adding Node.js repository" bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -"
@@ -694,6 +730,7 @@ server_main() {
     setup_auto_updates
 
     # Package managers & tools
+    install_homebrew
     install_node
     [ "$INSTALL_DOCKER" = true ] && install_docker || warn "Docker install failed — skipping"
     [ "$INSTALL_CLAUDE_CODE" = true ] && install_claude_code || true
