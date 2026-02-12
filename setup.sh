@@ -285,10 +285,10 @@ run_wizard_local() {
 
     echo "  Pick a server size:"
     echo ""
-    echo "    1)  CPX11 —  4 GB /  2 CPU  ~\$4/mo   Light usage"
-    echo "    2)  CPX21 —  8 GB /  4 CPU  ~\$5/mo   Recommended"
-    echo "    3)  CPX31 — 16 GB /  4 CPU  ~\$10/mo  Heavy usage"
-    echo "    4)  CPX41 — 16 GB /  8 CPU  ~\$15/mo  Power user"
+    echo "    1)  Small       —  2 GB /  2 CPU  ~\$6/mo   Light usage"
+    echo "    2)  Medium      —  4 GB /  3 CPU  ~\$11/mo  Recommended"
+    echo "    3)  Large       —  8 GB /  4 CPU  ~\$19/mo  Heavy usage"
+    echo "    4)  Extra Large — 16 GB /  8 CPU  ~\$34/mo  Power user"
     echo ""
     echo -en "  Choice [2]: "
     read -r size_choice

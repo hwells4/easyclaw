@@ -44,12 +44,12 @@ You can paste that into your terminal any time to get back into your server.
 
 EasyClaw runs on Hetzner Cloud. You pick the size during setup:
 
-| Size | What it's good for | ~Cost/month |
-|------|-------------------|-------------|
-| Small (4 GB) | Light usage | ~$4 |
-| **Medium (8 GB)** | **Recommended** | **~$5** |
-| Large (16 GB) | Heavy usage | ~$10 |
-| Extra Large (16 GB, 8 CPU) | Power user | ~$15 |
+| Size | RAM | CPUs | ~Cost/month |
+|------|-----|------|-------------|
+| Small | 2 GB | 2 | ~$6/mo |
+| **Medium** | **4 GB** | **3** | **~$11/mo (Recommended)** |
+| Large | 8 GB | 4 | ~$19/mo |
+| Extra Large | 16 GB | 8 | ~$34/mo |
 
 You can delete the server any time from the [Hetzner console](https://console.hetzner.cloud/) to stop billing.
 
