@@ -5,7 +5,7 @@ One command to launch a secure OpenClaw server. Creates the server, handles SSH 
 ## Quick Start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh | bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh)"
 ```
 
 That's it. The wizard handles everything:
@@ -16,8 +16,8 @@ That's it. The wizard handles everything:
 4. Creates the server via Hetzner API
 5. Waits for boot, SSHes in
 6. Hardens the server (firewall, fail2ban, SSH lockdown, swap)
-7. Installs Node.js, Homebrew, Docker, Claude Code, Codex
-8. Installs OpenClaw and runs its onboarding wizard
+7. Installs Node.js, Homebrew, and optional tools (Docker, Claude Code, Codex)
+8. Installs OpenClaw and runs its onboarding wizard (asks for your API keys)
 9. Creates a systemd service that keeps OpenClaw running
 10. Prints your SSH command and you're done
 
@@ -27,14 +27,16 @@ That's it. The wizard handles everything:
 2. **A Hetzner API token** — Console > Project > Security > API Tokens > Generate
 3. **API keys for OpenClaw** — the wizard tells you exactly what to paste and when
 
-That's all. You don't need to create a server manually. You don't need to set up SSH keys. EasyClaw does it.
+Your laptop needs `curl`, `ssh`, and `python3` (most Macs and Linux machines have these already).
+
+You don't need to create a server manually. You don't need to set up SSH keys. EasyClaw does it.
 
 ## What Gets Installed
 
 **Always:**
 - Security hardening (SSH lockdown, UFW firewall, Fail2ban, auto-updates)
 - Swap (dynamic, matches RAM)
-- Node.js 22, Homebrew
+- Node.js 22, Homebrew, Bun
 - OpenClaw + systemd gateway service
 - Daily /tmp cleanup cron
 - SECURITY.md agent boundaries
@@ -70,7 +72,7 @@ For scripted/automated deployments:
 HETZNER_TOKEN=your-token \
 SERVER_TYPE=cpx21 \
 SERVER_LOCATION=ash \
-  curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh | bash -s -- --no-wizard
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh)" -- --no-wizard
 ```
 
 All environment variables:
@@ -82,6 +84,10 @@ All environment variables:
 | `SERVER_LOCATION` | `ash` | `ash`, `hil`, `nbg1`, `hel1` |
 | `NEW_USER` | `claw` | Any valid username |
 | `SSH_KEY_PATH` | auto-generated | Path to existing SSH private key |
+| `SERVER_NAME` | auto-generated | Custom server name |
+| `INSTALL_DOCKER` | `true` | `true` or `false` |
+| `INSTALL_CLAUDE_CODE` | `true` | `true` or `false` |
+| `INSTALL_CODEX` | `true` | `true` or `false` |
 
 ## Server Sizes
 

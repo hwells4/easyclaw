@@ -4,7 +4,7 @@
 # https://github.com/hwells4/easyclaw
 #
 # Run from your laptop:
-#   curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh | bash
+#   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh)"
 #
 # The script handles everything:
 #   1. Creates a Hetzner server via API
@@ -189,18 +189,16 @@ run_remote_setup() {
     log "SSHing into $SERVER_IP and running server setup..."
     echo ""
 
-    # Build flags for remote execution
-    local remote_flags="--on-server --no-wizard"
-    remote_flags+=" NEW_USER=$NEW_USER"
-    remote_flags+=" INSTALL_DOCKER=$INSTALL_DOCKER"
-    remote_flags+=" INSTALL_CLAUDE_CODE=$INSTALL_CLAUDE_CODE"
-    remote_flags+=" INSTALL_CODEX=$INSTALL_CODEX"
-
-    # Copy the script to the server and run it
     local script_url="https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh"
+    local ssh_opts="-i $EASYCLAW_SSH_KEY -o StrictHostKeyChecking=no"
 
-    ssh -i "$EASYCLAW_SSH_KEY" -o StrictHostKeyChecking=no root@"$SERVER_IP" \
-        "NEW_USER=$NEW_USER INSTALL_DOCKER=$INSTALL_DOCKER INSTALL_CLAUDE_CODE=$INSTALL_CLAUDE_CODE INSTALL_CODEX=$INSTALL_CODEX curl -fsSL $script_url | bash -s -- --on-server"
+    # Download script to server first (keeps stdin free for interactive prompts)
+    ssh $ssh_opts root@"$SERVER_IP" \
+        "curl -fsSL $script_url -o /tmp/easyclaw-setup.sh && chmod +x /tmp/easyclaw-setup.sh"
+
+    # Run with -t for pseudo-terminal so openclaw onboard can prompt for API keys
+    ssh -t $ssh_opts root@"$SERVER_IP" \
+        "NEW_USER=$NEW_USER INSTALL_DOCKER=$INSTALL_DOCKER INSTALL_CLAUDE_CODE=$INSTALL_CLAUDE_CODE INSTALL_CODEX=$INSTALL_CODEX bash /tmp/easyclaw-setup.sh --on-server"
 }
 
 setup_remote_ssh_access() {
@@ -756,7 +754,7 @@ parse_args() {
                 echo "EasyClaw — One command to launch a secure OpenClaw server"
                 echo ""
                 echo "Usage:"
-                echo "  curl -fsSL .../setup.sh | bash        Run the wizard (from your laptop)"
+                echo "  /bin/bash -c \"\$(curl -fsSL .../setup.sh)\"   Run the wizard (from your laptop)"
                 echo "  ./setup.sh --on-server                Run server setup (called automatically)"
                 echo ""
                 echo "Environment variables (headless mode):"
