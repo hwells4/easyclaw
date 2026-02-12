@@ -1,115 +1,71 @@
 # EasyClaw
 
-One command to launch a secure OpenClaw server. Creates the server, handles SSH keys, hardens everything, and installs OpenClaw — all from your laptop.
+One command to launch your own AI assistant server. Run it from your laptop — it creates the server, secures it, and installs [OpenClaw](https://github.com/openclaw/openclaw) for you.
 
-## Quick Start
+## What You Need Before Starting
+
+1. **A Hetzner Cloud account** — [sign up here](https://console.hetzner.cloud/) (it's the server host, like a landlord for your AI)
+2. **A Hetzner API token** — once signed in, go to your project > Security > API Tokens > Generate. Copy the token — you'll paste it into the wizard.
+3. **API keys for OpenClaw** — the wizard tells you exactly what to get and when to paste it. You don't need these upfront.
+
+That's it. You don't need to know Linux, SSH, or servers. The wizard walks you through everything.
+
+## Run It
+
+Open your terminal (Terminal on Mac, or any command line) and paste:
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh)"
 ```
 
-That's it. The wizard handles everything:
+The wizard will:
 
-1. Asks for your Hetzner API token
-2. Picks server size and location
-3. Generates SSH keys (or uses your existing ones)
-4. Creates the server via Hetzner API
-5. Waits for boot, SSHes in
-6. Hardens the server (firewall, fail2ban, SSH lockdown, swap)
-7. Installs Node.js, Homebrew, and optional tools (Docker, Claude Code, Codex)
-8. Installs OpenClaw and runs its onboarding wizard (asks for your API keys)
-9. Creates a systemd service that keeps OpenClaw running
-10. Prints your SSH command and you're done
+1. Ask for your Hetzner API token
+2. Let you pick a server size and location
+3. Create the server and set up a secure connection
+4. Lock down the server (firewall, brute-force protection, encrypted access)
+5. Install everything OpenClaw needs
+6. Walk you through OpenClaw's own setup — this is where you paste your API keys
+7. Start OpenClaw and print how to connect
 
-## What You Need
-
-1. **A Hetzner Cloud account** — [sign up here](https://console.hetzner.cloud/)
-2. **A Hetzner API token** — Console > Project > Security > API Tokens > Generate
-3. **API keys for OpenClaw** — the wizard tells you exactly what to paste and when
-
-Your laptop needs `curl`, `ssh`, and `python3` (most Macs and Linux machines have these already).
-
-You don't need to create a server manually. You don't need to set up SSH keys. EasyClaw does it.
-
-## What Gets Installed
-
-**Always:**
-- Security hardening (SSH lockdown, UFW firewall, Fail2ban, auto-updates)
-- Swap (dynamic, matches RAM)
-- Node.js 22, Homebrew, Bun
-- OpenClaw + systemd gateway service
-- Daily /tmp cleanup cron
-- [ACIP](https://github.com/Dicklesworthstone/acip) prompt injection defense (SECURITY.md)
-
-**Optional (wizard asks):**
-- Docker
-- Claude Code (Anthropic CLI)
-- Codex (OpenAI CLI)
+The whole process takes about 10 minutes. Most of that is the server installing packages — you just follow the prompts.
 
 ## After Setup
 
-The wizard prints your SSH command:
+The wizard prints a command to connect to your server. It looks like:
 
-```bash
-ssh -i ~/.ssh/easyclaw_ed25519 claw@<server-ip>
+```
+ssh -i ~/.ssh/easyclaw_ed25519 claw@123.45.67.89
 ```
 
-On the server:
+You can paste that into your terminal any time to get back into your server.
 
+## Server Costs
+
+EasyClaw runs on Hetzner Cloud. You pick the size during setup:
+
+| Size | What it's good for | ~Cost/month |
+|------|-------------------|-------------|
+| Small (4 GB) | Light usage | ~$4 |
+| **Medium (8 GB)** | **Recommended** | **~$5** |
+| Large (16 GB) | Heavy usage | ~$10 |
+| Extra Large (16 GB, 8 CPU) | Power user | ~$15 |
+
+You can delete the server any time from the [Hetzner console](https://console.hetzner.cloud/) to stop billing.
+
+## Something Wrong?
+
+**Can't connect after setup?** Try the SSH command the wizard printed. If you lost it, check the [Hetzner console](https://console.hetzner.cloud/) for your server's IP address, then:
 ```bash
-sudo systemctl status openclaw-gateway   # Check status
-sudo journalctl -u openclaw-gateway -f   # View logs
-sudo vim /etc/openclaw-secrets            # Edit API keys
-sudo systemctl restart openclaw-gateway   # Restart after changes
-openclaw doctor                           # Health check
+ssh -i ~/.ssh/easyclaw_ed25519 claw@<your-server-ip>
 ```
 
-## Headless Mode
-
-For scripted/automated deployments:
-
+**OpenClaw not working?** Connect to your server and run:
 ```bash
-HETZNER_TOKEN=your-token \
-SERVER_TYPE=cpx21 \
-SERVER_LOCATION=ash \
-  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh)" -- --no-wizard
+openclaw doctor
 ```
 
-All environment variables:
-
-| Variable | Default | Options |
-|----------|---------|---------|
-| `HETZNER_TOKEN` | (required) | Your Hetzner API token |
-| `SERVER_TYPE` | `cpx21` | `cpx11`, `cpx21`, `cpx31`, `cpx41` |
-| `SERVER_LOCATION` | `ash` | `ash`, `hil`, `nbg1`, `hel1` |
-| `NEW_USER` | `claw` | Any valid username |
-| `SSH_KEY_PATH` | auto-generated | Path to existing SSH private key |
-| `SERVER_NAME` | auto-generated | Custom server name |
-| `INSTALL_DOCKER` | `true` | `true` or `false` |
-| `INSTALL_CLAUDE_CODE` | `true` | `true` or `false` |
-| `INSTALL_CODEX` | `true` | `true` or `false` |
-
-## Server Sizes
-
-| Type | RAM | CPU | ~Cost/mo |
-|------|-----|-----|----------|
-| CPX11 | 4 GB | 2 | ~$4 |
-| **CPX21** | **8 GB** | **4** | **~$5** |
-| CPX31 | 16 GB | 4 | ~$10 |
-| CPX41 | 16 GB | 8 | ~$15 |
-
-## Troubleshooting
-
-**Can't SSH after setup?** The script disables root login. Use the SSH command printed at the end, or access via Hetzner web console and run:
-```bash
-rm /etc/ssh/sshd_config.d/99-easyclaw-hardening.conf && systemctl restart sshd
-```
-
-**OpenClaw won't start?** Check logs and secrets:
-```bash
-sudo journalctl -u openclaw-gateway --no-pager -n 50
-sudo cat /etc/openclaw-secrets
-```
+**Need to start over?** Delete the server from the [Hetzner console](https://console.hetzner.cloud/) and run the setup command again.
 
 ## License
 
