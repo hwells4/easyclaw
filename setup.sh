@@ -416,7 +416,8 @@ ClientAliveInterval 300
 ClientAliveCountMax 2
 EOF
     if sshd -t; then
-        systemctl restart sshd
+        # Ubuntu 24.04 uses "ssh", older versions use "sshd"
+        systemctl restart ssh 2>/dev/null || systemctl restart sshd
         log "SSH hardened. Root login disabled, key auth only."
     else
         error "sshd config validation failed"
