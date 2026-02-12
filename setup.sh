@@ -542,24 +542,6 @@ EOF
     log "Auto-updates enabled"
 }
 
-install_homebrew() {
-    log "Installing Homebrew (this takes a couple minutes)..."
-    if command -v brew &>/dev/null; then warn "Already installed"; return; fi
-    curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh -o /tmp/brew-install.sh
-    quiet "Installing Homebrew" env NONINTERACTIVE=1 /bin/bash /tmp/brew-install.sh
-    rm -f /tmp/brew-install.sh
-    if ! grep -q 'linuxbrew' /root/.bashrc 2>/dev/null; then
-        echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /root/.bashrc
-    fi
-    eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-    if ! grep -q 'linuxbrew' "/home/$NEW_USER/.bashrc" 2>/dev/null; then
-        echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> "/home/$NEW_USER/.bashrc"
-    fi
-    chown "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.bashrc"
-    quiet "Installing compiler tools" brew install gcc
-    log "Homebrew installed"
-}
-
 install_node() {
     log "Installing Node.js 22..."
     quiet "Adding Node.js repository" bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -"
@@ -593,8 +575,10 @@ install_codex() {
 }
 
 install_openclaw_deps() {
-    log "Installing OpenClaw dependencies..."
-    quiet "Installing Bun runtime" su - "$NEW_USER" -c 'curl -fsSL https://bun.sh/install | bash'
+    log "Installing Bun runtime..."
+    curl -fsSL https://bun.sh/install -o /tmp/bun-install.sh
+    quiet "Installing Bun" su - "$NEW_USER" -c "bash /tmp/bun-install.sh"
+    rm -f /tmp/bun-install.sh
     if ! grep -q '\.bun/bin' "/home/$NEW_USER/.bashrc" 2>/dev/null; then
         echo 'export PATH="$HOME/.bun/bin:$PATH"' >> "/home/$NEW_USER/.bashrc"
     fi
@@ -710,7 +694,6 @@ server_main() {
     setup_auto_updates
 
     # Package managers & tools
-    install_homebrew || warn "Homebrew install failed — skipping (not required for OpenClaw)"
     install_node
     [ "$INSTALL_DOCKER" = true ] && install_docker || warn "Docker install failed — skipping"
     [ "$INSTALL_CLAUDE_CODE" = true ] && install_claude_code || true
