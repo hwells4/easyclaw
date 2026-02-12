@@ -1,204 +1,114 @@
 # EasyClaw
 
-Get OpenClaw running on a secure server in under 10 minutes. One script handles everything — security hardening, dependencies, OpenClaw install, and a systemd service that keeps it running.
+One command to launch a secure OpenClaw server. Creates the server, handles SSH keys, hardens everything, and installs OpenClaw — all from your laptop.
+
+## Quick Start
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh | bash
+```
+
+That's it. The wizard handles everything:
+
+1. Asks for your Hetzner API token
+2. Picks server size and location
+3. Generates SSH keys (or uses your existing ones)
+4. Creates the server via Hetzner API
+5. Waits for boot, SSHes in
+6. Hardens the server (firewall, fail2ban, SSH lockdown, swap)
+7. Installs Node.js, Homebrew, Docker, Claude Code, Codex
+8. Installs OpenClaw and runs its onboarding wizard
+9. Creates a systemd service that keeps OpenClaw running
+10. Prints your SSH command and you're done
 
 ## What You Need
 
-1. **A Hetzner Cloud account** — [Sign up here](https://console.hetzner.cloud/). Other providers (DigitalOcean, Contabo, AWS) work too, but Hetzner is cheapest.
-2. **An SSH key pair** on your local machine (see below)
-3. **API keys for OpenClaw** — the setup wizard will tell you exactly what to paste and when
+1. **A Hetzner Cloud account** — [sign up here](https://console.hetzner.cloud/)
+2. **A Hetzner API token** — Console > Project > Security > API Tokens > Generate
+3. **API keys for OpenClaw** — the wizard tells you exactly what to paste and when
 
-### SSH Keys (Important)
+That's all. You don't need to create a server manually. You don't need to set up SSH keys. EasyClaw does it.
 
-EasyClaw disables password login and enforces SSH key authentication. If you don't already have an SSH key, generate one now on your **local machine** (not the server):
+## What Gets Installed
 
-```bash
-ssh-keygen -t ed25519 -C "your-email@example.com"
-```
+**Always:**
+- Security hardening (SSH lockdown, UFW firewall, Fail2ban, auto-updates)
+- Swap (dynamic, matches RAM)
+- Node.js 22, Homebrew
+- OpenClaw + systemd gateway service
+- Daily /tmp cleanup cron
+- SECURITY.md agent boundaries
 
-Press Enter to accept the default location. This creates two files:
-- `~/.ssh/id_ed25519` — your private key (never share this)
-- `~/.ssh/id_ed25519.pub` — your public key (you'll give this to Hetzner)
+**Optional (wizard asks):**
+- Docker
+- Claude Code (Anthropic CLI)
+- Codex (OpenAI CLI)
 
-**Already have a key?** Check with `ls ~/.ssh/id_ed25519.pub`. If it exists, you're good.
+## After Setup
 
-## Step 1: Create a Server
-
-### Option A: Hetzner Console (Easiest)
-
-1. Log into [Hetzner Cloud Console](https://console.hetzner.cloud/)
-2. Create a new project (or use the default)
-3. Click **Add Server**
-4. Choose:
-   - **Location:** Ashburn (US) or wherever you're closest to
-   - **Image:** Ubuntu 24.04
-   - **Type:** CPX21 (4 vCPU, 8 GB RAM) — recommended for most users
-   - **SSH Key:** Click "Add SSH Key" and paste the contents of `~/.ssh/id_ed25519.pub`
-5. Click **Create & Buy Now** (~$5/month)
-6. Copy the server's IP address
-
-### Option B: Terraform (Automated)
-
-If you prefer infrastructure-as-code, see [`terraform/`](terraform/). It provisions the server, firewall, and SSH key in one command.
-
-### Server Size Guide
-
-| RAM | CPU | ~Cost/mo | Best For |
-|-----|-----|----------|----------|
-| 4 GB | 2 cores | ~$4 | Light usage, single agent |
-| **8 GB** | **4 cores** | **~$5** | **Most users** |
-| 16 GB | 4 cores | ~$10 | Multiple agents, heavy usage |
-| 32 GB | 8 cores | ~$27 | Power user, concurrent workloads |
-
-## Step 2: Run EasyClaw
-
-SSH into your new server as root and run:
+The wizard prints your SSH command:
 
 ```bash
-ssh root@<your-server-ip>
+ssh -i ~/.ssh/easyclaw_ed25519 claw@<server-ip>
 ```
 
-Then:
+On the server:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh | sudo bash -s -- --install-openclaw
+sudo systemctl status openclaw-gateway   # Check status
+sudo journalctl -u openclaw-gateway -f   # View logs
+sudo vim /etc/openclaw-secrets            # Edit API keys
+sudo systemctl restart openclaw-gateway   # Restart after changes
+openclaw doctor                           # Health check
 ```
 
-The setup wizard walks you through everything interactively. It takes about 5-8 minutes.
+## Headless Mode
 
-## What Happens During Setup
-
-The wizard asks a few questions (username, which tools to install), then automatically:
-
-1. **Creates a non-root user** (`claw` by default) with sudo access
-2. **Hardens SSH** — disables root login, enforces key-only auth, limits retries to 3
-3. **Configures firewall** — blocks everything except SSH (22), HTTP/S (80/443), and OpenClaw (7860)
-4. **Enables Fail2ban** — bans IPs for 24 hours after 3 failed SSH attempts
-5. **Sets up swap** — dynamically sized to match your RAM, prevents out-of-memory crashes
-6. **Enables auto-updates** — security patches install automatically
-7. **Installs tools** — Node.js 22, Homebrew, Docker, Claude Code, Codex
-8. **Installs OpenClaw** — as the service user, not root
-9. **Runs OpenClaw onboarding** — this is where you'll paste your API keys (Telegram bot token, model API key, etc.)
-10. **Creates a systemd service** — OpenClaw gateway runs automatically and restarts on failure
-11. **Installs temp cleanup** — daily cron clears stale files from `/tmp` without touching active processes
-
-## Step 3: After Setup
-
-Once the script finishes, copy your SSH key to the new user so you can log in directly:
+For scripted/automated deployments:
 
 ```bash
-# From your LOCAL machine (not the server):
-ssh-copy-id claw@<your-server-ip>
+HETZNER_TOKEN=your-token \
+SERVER_TYPE=cpx21 \
+SERVER_LOCATION=ash \
+  curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh | bash -s -- --no-wizard
 ```
 
-Test it:
+All environment variables:
 
-```bash
-ssh claw@<your-server-ip>
-```
+| Variable | Default | Options |
+|----------|---------|---------|
+| `HETZNER_TOKEN` | (required) | Your Hetzner API token |
+| `SERVER_TYPE` | `cpx21` | `cpx11`, `cpx21`, `cpx31`, `cpx41` |
+| `SERVER_LOCATION` | `ash` | `ash`, `hil`, `nbg1`, `hel1` |
+| `NEW_USER` | `claw` | Any valid username |
+| `SSH_KEY_PATH` | auto-generated | Path to existing SSH private key |
 
-Then verify everything is running:
+## Server Sizes
 
-```bash
-sudo systemctl status openclaw-gateway   # Should be active
-sudo ufw status                          # Should show allowed ports
-sudo fail2ban-client status              # Should show sshd jail
-swapon --show                            # Should show swap active
-```
+| Type | RAM | CPU | ~Cost/mo |
+|------|-----|-----|----------|
+| CPX11 | 4 GB | 2 | ~$4 |
+| **CPX21** | **8 GB** | **4** | **~$5** |
+| CPX31 | 16 GB | 4 | ~$10 |
+| CPX41 | 16 GB | 8 | ~$15 |
 
-## Managing OpenClaw
+## Terraform
 
-```bash
-# Start/stop/restart the gateway
-sudo systemctl start openclaw-gateway
-sudo systemctl stop openclaw-gateway
-sudo systemctl restart openclaw-gateway
-
-# View logs
-sudo journalctl -u openclaw-gateway -f
-
-# Edit secrets (API keys, tokens)
-sudo vim /etc/openclaw-secrets
-sudo systemctl restart openclaw-gateway   # Restart to pick up changes
-
-# Run health check
-openclaw doctor
-
-# Run security audit
-openclaw security audit
-```
-
-Secrets are stored in `/etc/openclaw-secrets` (owned by root, mode 600) and loaded by systemd. They never appear in your shell history or environment.
-
-## Tailscale (Recommended)
-
-Instead of exposing OpenClaw's port to the internet, use [Tailscale](https://tailscale.com/) for private access over a mesh VPN:
-
-```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-tailscale up
-```
-
-Then access OpenClaw via its Tailscale IP instead of the public IP.
-
-## Headless / Automated Setup
-
-Skip the wizard for scripted deployments:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh | \
-  sudo bash -s -- --install-openclaw --no-wizard
-```
-
-Customize with environment variables:
-
-```bash
-NEW_USER=myuser SSH_PORT=2222 OPENCLAW_PORT=8080 sudo ./setup.sh --install-openclaw --no-wizard
-```
-
-Or provide a config file for fully automated OpenClaw setup:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh | \
-  sudo bash -s -- --config openclaw-config.json
-```
-
-See `openclaw-config.example.json` for the config format.
+The `terraform/` directory is also available for infrastructure-as-code provisioning on Hetzner. See [`terraform/README.md`](terraform/README.md).
 
 ## Troubleshooting
 
-### Can't SSH after setup
-
-The script disables root login and password auth. If you're locked out:
-
-1. Access your server via the Hetzner web console
-2. Run: `rm /etc/ssh/sshd_config.d/99-openclaw-hardening.conf && systemctl restart sshd`
-3. Fix your SSH key setup, then re-run EasyClaw
-
-### "Permission denied" with Docker
-
-Log out and back in — group changes take effect on new sessions:
-
+**Can't SSH after setup?** The script disables root login. Use the SSH command printed at the end, or access via Hetzner web console and run:
 ```bash
-exit
-ssh claw@<your-server-ip>
+rm /etc/ssh/sshd_config.d/99-easyclaw-hardening.conf && systemctl restart sshd
 ```
 
-### OpenClaw gateway won't start
-
-Check the logs:
-
+**OpenClaw won't start?** Check logs and secrets:
 ```bash
 sudo journalctl -u openclaw-gateway --no-pager -n 50
+sudo cat /etc/openclaw-secrets
 ```
-
-Common fix: make sure `/etc/openclaw-secrets` has your API keys set.
-
-## Tested On
-
-- Ubuntu 22.04 LTS / 24.04 LTS
-- Hetzner Cloud, DigitalOcean, Contabo, AWS EC2
 
 ## License
 
-MIT
+MIT — Copyright (c) 2026 Dodo Digital

@@ -1,236 +1,403 @@
 #!/bin/bash
 #
-# VPS Setup Script for OpenClaw
-# Hardens a fresh VPS and installs dependencies
+# EasyClaw — One command to launch a secure OpenClaw server
+# https://github.com/hwells4/easyclaw
+#
+# Run from your laptop:
+#   curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh | bash
+#
+# The script handles everything:
+#   1. Creates a Hetzner server via API
+#   2. Generates/uses SSH keys
+#   3. SSHes in and hardens the server
+#   4. Installs OpenClaw + all dependencies
 #
 
 set -euo pipefail
 
-# Colors
+# ─── Colors ───────────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+BLUE='\033[0;34m'
+BOLD='\033[1m'
+NC='\033[0m'
 
-# Configuration (defaults, overridden by wizard or CLI flags)
+# ─── Configuration ────────────────────────────────────────────────────
 NEW_USER="${NEW_USER:-claw}"
 SSH_PORT="${SSH_PORT:-22}"
 OPENCLAW_PORT="${OPENCLAW_PORT:-7860}"
-INSTALL_OPENCLAW="${INSTALL_OPENCLAW:-false}"
-OPENCLAW_CONFIG="${OPENCLAW_CONFIG:-}"
+HETZNER_TOKEN="${HETZNER_TOKEN:-}"
+SERVER_TYPE="${SERVER_TYPE:-cpx21}"
+SERVER_LOCATION="${SERVER_LOCATION:-ash}"
+SERVER_NAME="${SERVER_NAME:-}"
+SSH_KEY_PATH="${SSH_KEY_PATH:-}"
+RUN_WIZARD="${RUN_WIZARD:-true}"
 INSTALL_DOCKER="${INSTALL_DOCKER:-true}"
 INSTALL_CLAUDE_CODE="${INSTALL_CLAUDE_CODE:-true}"
 INSTALL_CODEX="${INSTALL_CODEX:-true}"
-RUN_WIZARD="${RUN_WIZARD:-true}"
+OPENCLAW_CONFIG="${OPENCLAW_CONFIG:-}"
 
-log() {
-    echo -e "${GREEN}[SETUP]${NC} $1"
-}
+# Set during execution
+SERVER_IP=""
+EASYCLAW_SSH_KEY="$HOME/.ssh/easyclaw_ed25519"
 
-warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
+log() { echo -e "${GREEN}[easyclaw]${NC} $1"; }
+warn() { echo -e "${YELLOW}[warn]${NC} $1"; }
+error() { echo -e "${RED}[error]${NC} $1"; exit 1; }
+step() { echo -e "\n${BLUE}${BOLD}── $1 ──${NC}\n"; }
 
-error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-    exit 1
-}
-
-# Helper: ask a yes/no question, return 0 for yes, 1 for no
 ask_yes_no() {
-    local prompt="$1"
-    local default="${2:-y}"  # default to yes
-
+    local prompt="$1" default="${2:-y}"
     local yn_hint="[Y/n]"
-    if [ "$default" = "n" ]; then
-        yn_hint="[y/N]"
-    fi
-
+    [ "$default" = "n" ] && yn_hint="[y/N]"
     while true; do
         echo -en "  ${prompt} ${yn_hint}: "
         read -r answer
         answer="${answer:-$default}"
         case "$answer" in
-            [Yy]*) return 0 ;;
-            [Nn]*) return 1 ;;
+            [Yy]*) return 0 ;; [Nn]*) return 1 ;;
             *) echo "  Please answer y or n." ;;
         esac
     done
 }
 
-# Interactive setup wizard — runs before anything is installed
-run_wizard() {
-    echo ""
-    echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║        OpenClaw VPS Setup Wizard         ║${NC}"
-    echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
-    echo ""
-    echo "  This wizard will walk you through setting up your server."
-    echo "  You can skip anything you're not ready for yet."
-    echo ""
+# ─── Hetzner API helpers ─────────────────────────────────────────────
+hetzner_api() {
+    local method="$1" endpoint="$2" data="${3:-}"
+    local args=(-s -H "Authorization: Bearer $HETZNER_TOKEN" -H "Content-Type: application/json")
+    [ -n "$data" ] && args+=(-d "$data")
+    curl "${args[@]}" -X "$method" "https://api.hetzner.cloud/v1${endpoint}"
+}
 
-    # ── Server size recommendation ──
-    echo -e "${GREEN}── Server Size ─────────────────────────────${NC}"
-    echo ""
-    echo "  If you haven't created your VPS yet, here are our recommendations:"
-    echo ""
-    echo "    1)  4 GB RAM / 2 CPU   ~\$4-6/mo     Light usage, single agent"
-    echo "    2)  8 GB RAM / 4 CPU   ~\$8-10/mo    Recommended — most users"
-    echo "    3) 16 GB RAM / 6 CPU   ~\$15-18/mo   Multiple agents, heavy usage"
-    echo "    4) 32 GB RAM / 8 CPU   ~\$28-35/mo   Power user, concurrent workloads"
-    echo ""
-    echo "  We recommend option 2 (8 GB) for most users."
-    echo "  Hetzner, DigitalOcean, and Contabo all work well."
-    echo ""
-    echo -en "  Press Enter to continue... "
-    read -r
-    echo ""
+# =====================================================================
+#  PHASE 1: LOCAL — Create server, handle SSH keys
+# =====================================================================
 
-    # ── Username ──
-    echo -e "${GREEN}── User Account ────────────────────────────${NC}"
-    echo ""
-    echo "  We'll create a non-root user to run your services."
-    while true; do
-        echo -en "  Username [${NEW_USER}]: "
-        read -r input_user
-        if [ -z "$input_user" ]; then
-            break
-        fi
-        if [[ "$input_user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
-            NEW_USER="$input_user"
-            break
-        else
-            echo "  Invalid username. Must start with a lowercase letter or underscore,"
-            echo "  followed by up to 31 lowercase letters, digits, underscores, or hyphens."
+setup_ssh_key() {
+    step "SSH Key"
+
+    # Check for existing key
+    if [ -n "$SSH_KEY_PATH" ] && [ -f "$SSH_KEY_PATH" ]; then
+        log "Using provided SSH key: $SSH_KEY_PATH"
+        EASYCLAW_SSH_KEY="$SSH_KEY_PATH"
+        return
+    fi
+
+    # Check for common existing keys
+    for key in "$HOME/.ssh/id_ed25519" "$HOME/.ssh/id_rsa" "$HOME/.ssh/easyclaw_ed25519"; do
+        if [ -f "$key" ] && [ -f "${key}.pub" ]; then
+            echo "  Found existing SSH key: $key"
+            if ask_yes_no "Use this key?" "y"; then
+                EASYCLAW_SSH_KEY="$key"
+                return
+            fi
         fi
     done
-    echo ""
 
-    # ── What to install ──
-    echo -e "${GREEN}── Tools to Install ────────────────────────${NC}"
-    echo ""
-    echo "  The basics (Node.js, security hardening, swap) are always installed."
-    echo "  Choose which optional tools you'd like:"
-    echo ""
+    # Generate a new key
+    log "Generating new SSH key..."
+    ssh-keygen -t ed25519 -f "$EASYCLAW_SSH_KEY" -N "" -C "easyclaw-$(date +%Y%m%d)"
+    log "Created: $EASYCLAW_SSH_KEY"
+}
 
-    if ask_yes_no "Install Docker? (container runtime)" "y"; then
-        INSTALL_DOCKER=true
+create_hetzner_server() {
+    step "Create Server"
+
+    # Upload SSH key to Hetzner
+    log "Uploading SSH key to Hetzner..."
+    local pubkey
+    pubkey=$(cat "${EASYCLAW_SSH_KEY}.pub")
+    local key_name="easyclaw-$(date +%s)"
+
+    local key_response
+    key_response=$(hetzner_api POST /ssh_keys "{\"name\":\"$key_name\",\"public_key\":\"$pubkey\"}")
+
+    local ssh_key_id
+    ssh_key_id=$(echo "$key_response" | python3 -c "import sys,json; print(json.load(sys.stdin)['ssh_key']['id'])" 2>/dev/null)
+
+    if [ -z "$ssh_key_id" ] || [ "$ssh_key_id" = "None" ]; then
+        # Key might already exist — try to find it by fingerprint
+        local fingerprint
+        fingerprint=$(ssh-keygen -lf "${EASYCLAW_SSH_KEY}.pub" -E md5 | awk '{print $2}' | sed 's/MD5://')
+        ssh_key_id=$(hetzner_api GET "/ssh_keys" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for k in data.get('ssh_keys', []):
+    if k.get('fingerprint') == '$fingerprint':
+        print(k['id']); break
+" 2>/dev/null)
+        if [ -z "$ssh_key_id" ]; then
+            echo "$key_response" >&2
+            error "Failed to upload SSH key to Hetzner. Check your API token."
+        fi
+        log "SSH key already exists on Hetzner (id: $ssh_key_id)"
     else
-        INSTALL_DOCKER=false
+        log "SSH key uploaded (id: $ssh_key_id)"
     fi
 
-    if ask_yes_no "Install Claude Code? (Anthropic's CLI agent)" "y"; then
-        INSTALL_CLAUDE_CODE=true
-    else
-        INSTALL_CLAUDE_CODE=false
+    # Create server
+    if [ -z "$SERVER_NAME" ]; then
+        SERVER_NAME="openclaw-$(head -c 4 /dev/urandom | xxd -p)"
     fi
 
-    if ask_yes_no "Install Codex? (OpenAI's CLI agent)" "y"; then
-        INSTALL_CODEX=true
-    else
-        INSTALL_CODEX=false
+    log "Creating server: $SERVER_NAME ($SERVER_TYPE in $SERVER_LOCATION)..."
+
+    local server_response
+    server_response=$(hetzner_api POST /servers "{
+        \"name\": \"$SERVER_NAME\",
+        \"server_type\": \"$SERVER_TYPE\",
+        \"image\": \"ubuntu-24.04\",
+        \"location\": \"$SERVER_LOCATION\",
+        \"ssh_keys\": [$ssh_key_id],
+        \"start_after_create\": true
+    }")
+
+    SERVER_IP=$(echo "$server_response" | python3 -c "import sys,json; print(json.load(sys.stdin)['server']['public_net']['ipv4']['ip'])" 2>/dev/null)
+
+    if [ -z "$SERVER_IP" ] || [ "$SERVER_IP" = "None" ]; then
+        echo "$server_response" >&2
+        error "Failed to create server. Check your API token and Hetzner account."
     fi
 
+    log "Server created! IP: $SERVER_IP"
+}
+
+wait_for_server() {
+    step "Waiting for Server"
+
+    log "Waiting for $SERVER_IP to accept SSH connections..."
+    local attempts=0
+    local max_attempts=60  # 5 minutes
+
+    while [ $attempts -lt $max_attempts ]; do
+        if ssh -i "$EASYCLAW_SSH_KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes root@"$SERVER_IP" "echo ok" &>/dev/null; then
+            log "Server is ready!"
+            return
+        fi
+        attempts=$((attempts + 1))
+        echo -en "\r  Waiting... ${attempts}/${max_attempts} ($(( attempts * 5 ))s)"
+        sleep 5
+    done
+    echo ""
+    error "Server did not become reachable after 5 minutes. Check Hetzner console."
+}
+
+run_remote_setup() {
+    step "Running Setup on Server"
+
+    log "SSHing into $SERVER_IP and running server setup..."
     echo ""
 
-    # ── OpenClaw ──
-    echo -e "${GREEN}── OpenClaw ────────────────────────────────${NC}"
+    # Build flags for remote execution
+    local remote_flags="--on-server --no-wizard"
+    remote_flags+=" NEW_USER=$NEW_USER"
+    remote_flags+=" INSTALL_DOCKER=$INSTALL_DOCKER"
+    remote_flags+=" INSTALL_CLAUDE_CODE=$INSTALL_CLAUDE_CODE"
+    remote_flags+=" INSTALL_CODEX=$INSTALL_CODEX"
+
+    # Copy the script to the server and run it
+    local script_url="https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh"
+
+    ssh -i "$EASYCLAW_SSH_KEY" -o StrictHostKeyChecking=no root@"$SERVER_IP" \
+        "NEW_USER=$NEW_USER INSTALL_DOCKER=$INSTALL_DOCKER INSTALL_CLAUDE_CODE=$INSTALL_CLAUDE_CODE INSTALL_CODEX=$INSTALL_CODEX curl -fsSL $script_url | bash -s -- --on-server"
+}
+
+setup_remote_ssh_access() {
+    # Copy the SSH key to the new user account so they can log in directly
+    log "Setting up SSH access for user $NEW_USER..."
+
+    ssh -i "$EASYCLAW_SSH_KEY" -o StrictHostKeyChecking=no root@"$SERVER_IP" "
+        mkdir -p /home/$NEW_USER/.ssh
+        cp /root/.ssh/authorized_keys /home/$NEW_USER/.ssh/authorized_keys
+        chown -R $NEW_USER:$NEW_USER /home/$NEW_USER/.ssh
+        chmod 700 /home/$NEW_USER/.ssh
+        chmod 600 /home/$NEW_USER/.ssh/authorized_keys
+    "
+
+    log "SSH access configured for $NEW_USER"
+}
+
+run_wizard_local() {
     echo ""
-    echo "  OpenClaw is the AI assistant that runs on this server."
-    echo "  It connects to Telegram, manages agents, and runs a gateway."
+    echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║            EasyClaw Setup                ║${NC}"
+    echo -e "${GREEN}║   One command. Secure OpenClaw server.   ║${NC}"
+    echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
+    echo ""
+    echo "  This wizard will create a server, harden it, and install"
+    echo "  OpenClaw — all from right here. Takes about 10 minutes."
     echo ""
 
-    if ask_yes_no "Install OpenClaw?" "y"; then
-        INSTALL_OPENCLAW=true
+    # ── Hetzner API token ──
+    step "Hetzner Cloud"
 
+    echo "  You need a Hetzner Cloud API token."
+    echo "  Get one at: https://console.hetzner.cloud/"
+    echo "    → Pick a project → Security → API Tokens → Generate"
+    echo ""
+
+    while [ -z "$HETZNER_TOKEN" ]; do
+        echo -en "  Paste your Hetzner API token: "
+        read -rs HETZNER_TOKEN
         echo ""
-        echo "  After the system is set up, OpenClaw will run its own"
-        echo "  onboarding wizard. It will ask you to paste API keys"
-        echo "  for the services you want to connect (Telegram, etc.)."
-        echo ""
-        echo "  You don't need them right now — just have them ready"
-        echo "  when that step comes up. Here's what you might need:"
-        echo ""
-        echo "    - Kimi K2.5 API key:  https://platform.moonshot.cn/console/api-keys"
-        echo "      (recommended model — fast, capable, affordable)"
-        echo "    - Telegram bot token: Message @BotFather on Telegram"
-        echo "    - 1Password token:    https://my.1password.com/developer"
-        echo "      (optional, for secrets management)"
-        echo ""
-        echo -en "  Press Enter when you're ready to continue... "
-        read -r
+        if [ -z "$HETZNER_TOKEN" ]; then
+            echo "  Token can't be empty."
+        fi
+    done
+
+    # Validate token
+    local test_response
+    test_response=$(hetzner_api GET /servers 2>/dev/null || true)
+    if echo "$test_response" | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'servers' in d" 2>/dev/null; then
+        log "API token valid!"
     else
-        INSTALL_OPENCLAW=false
+        error "Invalid API token. Check it and try again."
     fi
 
+    # ── Server size ──
+    step "Server Size"
+
+    echo "  Pick a server size:"
+    echo ""
+    echo "    1)  CPX11 —  4 GB /  2 CPU  ~\$4/mo   Light usage"
+    echo "    2)  CPX21 —  8 GB /  4 CPU  ~\$5/mo   Recommended"
+    echo "    3)  CPX31 — 16 GB /  4 CPU  ~\$10/mo  Heavy usage"
+    echo "    4)  CPX41 — 16 GB /  8 CPU  ~\$15/mo  Power user"
+    echo ""
+    echo -en "  Choice [2]: "
+    read -r size_choice
+    case "${size_choice:-2}" in
+        1) SERVER_TYPE="cpx11" ;; 2) SERVER_TYPE="cpx21" ;;
+        3) SERVER_TYPE="cpx31" ;; 4) SERVER_TYPE="cpx41" ;;
+        *) SERVER_TYPE="cpx21" ;;
+    esac
+
+    # ── Location ──
+    step "Server Location"
+
+    echo "  Pick a location:"
+    echo ""
+    echo "    1)  Ashburn, US (ash)      — US East"
+    echo "    2)  Hillsboro, US (hil)    — US West"
+    echo "    3)  Nuremberg, DE (nbg1)   — Europe"
+    echo "    4)  Helsinki, FI (hel1)    — Europe"
+    echo ""
+    echo -en "  Choice [1]: "
+    read -r loc_choice
+    case "${loc_choice:-1}" in
+        1) SERVER_LOCATION="ash" ;; 2) SERVER_LOCATION="hil" ;;
+        3) SERVER_LOCATION="nbg1" ;; 4) SERVER_LOCATION="hel1" ;;
+        *) SERVER_LOCATION="ash" ;;
+    esac
+
+    # ── Username ──
+    step "User Account"
+
+    echo "  Username for the server (runs OpenClaw, not root)."
+    echo -en "  Username [claw]: "
+    read -r input_user
+    if [ -n "$input_user" ]; then
+        if [[ "$input_user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+            NEW_USER="$input_user"
+        else
+            warn "Invalid username, using default: claw"
+        fi
+    fi
+
+    # ── Optional tools ──
+    step "Optional Tools"
+
+    echo "  These are always installed: Node.js 22, Homebrew, OpenClaw"
+    echo "  Choose extras:"
+    echo ""
+
+    ask_yes_no "Docker?" "y" && INSTALL_DOCKER=true || INSTALL_DOCKER=false
+    ask_yes_no "Claude Code? (Anthropic CLI)" "y" && INSTALL_CLAUDE_CODE=true || INSTALL_CLAUDE_CODE=false
+    ask_yes_no "Codex? (OpenAI CLI)" "y" && INSTALL_CODEX=true || INSTALL_CODEX=false
+
+    # ── API keys heads up ──
+    step "Almost Ready"
+
+    echo "  After the server is set up, OpenClaw will ask you to paste"
+    echo "  API keys for the services you want. Have these ready:"
+    echo ""
+    echo "    - Kimi K2.5 API key:  https://platform.moonshot.cn/console/api-keys"
+    echo "    - Telegram bot token: Message @BotFather on Telegram"
+    echo "    - 1Password token:    https://my.1password.com/developer (optional)"
     echo ""
 
     # ── Summary ──
-    echo -e "${GREEN}── Setup Summary ───────────────────────────${NC}"
-    echo ""
-    echo "  User:          $NEW_USER"
-    echo "  Docker:        $([ "$INSTALL_DOCKER" = true ] && echo "yes" || echo "no")"
-    echo "  Claude Code:   $([ "$INSTALL_CLAUDE_CODE" = true ] && echo "yes" || echo "no")"
-    echo "  Codex:         $([ "$INSTALL_CODEX" = true ] && echo "yes" || echo "no")"
-    echo "  OpenClaw:      $([ "$INSTALL_OPENCLAW" = true ] && echo "yes" || echo "no")"
-    echo ""
-    echo "  Always included: Node.js 22, firewall, fail2ban, swap,"
-    echo "                   SSH hardening, auto-updates, tmp cleanup"
+    step "Summary"
+
+    echo "  Server:      $SERVER_TYPE in $SERVER_LOCATION"
+    echo "  User:        $NEW_USER"
+    echo "  Docker:      $([ "$INSTALL_DOCKER" = true ] && echo "yes" || echo "no")"
+    echo "  Claude Code: $([ "$INSTALL_CLAUDE_CODE" = true ] && echo "yes" || echo "no")"
+    echo "  Codex:       $([ "$INSTALL_CODEX" = true ] && echo "yes" || echo "no")"
+    echo "  OpenClaw:    always"
     echo ""
 
-    if ! ask_yes_no "Look good? Start the setup?" "y"; then
-        echo ""
-        echo "  Setup cancelled. Run again when you're ready."
+    if ! ask_yes_no "Create the server and start setup?" "y"; then
+        echo "  Cancelled."
         exit 0
     fi
+}
 
+print_final_summary() {
     echo ""
-    log "Starting setup with your selections..."
+    echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║        EasyClaw Setup Complete!          ║${NC}"
+    echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
+    echo ""
+    echo "  Server IP:   $SERVER_IP"
+    echo "  SSH user:    $NEW_USER"
+    echo "  SSH key:     $EASYCLAW_SSH_KEY"
+    echo ""
+    echo "  Connect:"
+    echo "    ssh -i $EASYCLAW_SSH_KEY $NEW_USER@$SERVER_IP"
+    echo ""
+    echo "  OpenClaw commands (on server):"
+    echo "    sudo systemctl status openclaw-gateway"
+    echo "    sudo journalctl -u openclaw-gateway -f"
+    echo ""
+    echo "  Manage secrets:"
+    echo "    sudo vim /etc/openclaw-secrets"
+    echo "    sudo systemctl restart openclaw-gateway"
+    echo ""
+    echo -e "  ${GREEN}Your OpenClaw server is running!${NC}"
     echo ""
 }
 
-# Parse command line arguments
-parse_args() {
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            --install-openclaw)
-                INSTALL_OPENCLAW=true
-                shift
-                ;;
-            --config)
-                OPENCLAW_CONFIG="$2"
-                INSTALL_OPENCLAW=true
-                shift 2
-                ;;
-            --no-wizard)
-                RUN_WIZARD=false
-                shift
-                ;;
-            --help|-h)
-                echo "Usage: $0 [OPTIONS]"
-                echo ""
-                echo "Options:"
-                echo "  --install-openclaw    Install OpenClaw after system setup"
-                echo "  --config <file>       Use config file for OpenClaw setup"
-                echo "  --no-wizard           Skip interactive wizard (use defaults/flags)"
-                echo "  --help, -h            Show this help message"
-                echo ""
-                echo "Environment variables:"
-                echo "  NEW_USER              Username to create (default: claw)"
-                echo "  SSH_PORT              SSH port (default: 22)"
-                echo "  OPENCLAW_PORT         OpenClaw port (default: 7860)"
-                exit 0
-                ;;
-            *)
-                error "Unknown option: $1"
-                ;;
-        esac
+local_main() {
+    # Check dependencies
+    for cmd in curl ssh ssh-keygen python3; do
+        command -v "$cmd" &>/dev/null || error "Missing required tool: $cmd"
     done
+
+    if [ "$RUN_WIZARD" = true ] && [ -t 0 ]; then
+        run_wizard_local
+    else
+        # Headless mode — need HETZNER_TOKEN set
+        [ -z "$HETZNER_TOKEN" ] && error "HETZNER_TOKEN required for non-interactive mode"
+    fi
+
+    setup_ssh_key
+    create_hetzner_server
+    wait_for_server
+    run_remote_setup
+    setup_remote_ssh_access
+
+    print_final_summary
 }
+
+# =====================================================================
+#  PHASE 2: ON-SERVER — Harden + install everything
+# =====================================================================
 
 check_root() {
     if [[ $EUID -ne 0 ]]; then
-        error "This script must be run as root (use sudo)"
+        error "On-server setup must run as root"
     fi
 }
 
@@ -239,51 +406,29 @@ update_system() {
     apt-get update
     apt-get upgrade -y
     apt-get install -y \
-        curl \
-        wget \
-        git \
-        vim \
-        htop \
-        tmux \
-        ufw \
-        fail2ban \
-        software-properties-common \
-        apt-transport-https \
-        ca-certificates \
-        gnupg \
-        lsb-release \
-        build-essential \
-        python3 \
-        python3-pip \
-        python3-venv
+        curl wget git vim htop tmux ufw fail2ban \
+        software-properties-common apt-transport-https \
+        ca-certificates gnupg lsb-release build-essential \
+        python3 python3-pip python3-venv
 }
 
 create_user() {
     log "Creating user: $NEW_USER"
-    
     if id "$NEW_USER" &>/dev/null; then
         warn "User $NEW_USER already exists"
         return
     fi
-    
-    # Create user with sudo access
     useradd -m -s /bin/bash "$NEW_USER"
     usermod -aG sudo "$NEW_USER"
-    
-    # Allow passwordless sudo for specific commands (optional, more secure)
-    # echo "$NEW_USER ALL=(ALL) NOPASSWD: /bin/systemctl" > /etc/sudoers.d/"$NEW_USER"
-    
-    log "User $NEW_USER created. Set a password:"
-    passwd "$NEW_USER" || warn "passwd failed — set password manually later with: sudo passwd $NEW_USER"
+    # No password prompt — SSH key auth only
+    log "User $NEW_USER created (SSH key auth, no password)"
 }
 
-setup_ssh() {
+setup_ssh_hardening() {
     log "Configuring SSH hardening..."
-
-    # Use a drop-in file for idempotent, non-destructive hardening
     mkdir -p /etc/ssh/sshd_config.d
-    cat > /etc/ssh/sshd_config.d/99-openclaw-hardening.conf << 'EOF'
-# Security hardening applied by OpenClaw setup
+    cat > /etc/ssh/sshd_config.d/99-easyclaw-hardening.conf << 'EOF'
+# Security hardening applied by EasyClaw
 PermitRootLogin no
 PasswordAuthentication no
 PubkeyAuthentication yes
@@ -291,39 +436,28 @@ MaxAuthTries 3
 ClientAliveInterval 300
 ClientAliveCountMax 2
 EOF
-
-    # Validate config before restarting
     if sshd -t; then
         systemctl restart sshd
-        log "SSH configured. Root login disabled, key auth only."
+        log "SSH hardened. Root login disabled, key auth only."
     else
-        error "sshd config validation failed — check /etc/ssh/sshd_config.d/99-openclaw-hardening.conf"
+        error "sshd config validation failed"
     fi
-    warn "Make sure you have SSH key access before disconnecting!"
 }
 
 setup_firewall() {
     log "Configuring UFW firewall..."
-
     ufw default deny incoming
     ufw default allow outgoing
     ufw allow "$SSH_PORT/tcp"
     ufw allow 80/tcp
     ufw allow 443/tcp
-
-    # Only open OpenClaw port if installing OpenClaw; Tailscale is recommended for remote access
-    if [ "$INSTALL_OPENCLAW" = true ]; then
-        ufw allow "$OPENCLAW_PORT/tcp"
-    fi
-
+    ufw allow "$OPENCLAW_PORT/tcp"
     ufw --force enable
-    log "Firewall enabled. Allowed ports: $SSH_PORT (SSH), 80/443 (HTTP/HTTPS)$([ "$INSTALL_OPENCLAW" = true ] && echo ", $OPENCLAW_PORT (OpenClaw)")"
+    log "Firewall enabled. Allowed: SSH ($SSH_PORT), HTTP/S, OpenClaw ($OPENCLAW_PORT)"
 }
 
 setup_fail2ban() {
     log "Configuring Fail2ban..."
-    
-    # Create custom jail config
     cat > /etc/fail2ban/jail.local << EOF
 [DEFAULT]
 bantime = 24h
@@ -337,121 +471,164 @@ filter = sshd
 logpath = /var/log/auth.log
 maxretry = 3
 EOF
-    
     systemctl enable fail2ban
     systemctl start fail2ban
-    log "Fail2ban configured and started"
+    log "Fail2ban configured"
+}
+
+setup_swap() {
+    log "Setting up swap..."
+    if swapon --show | grep -q '/swapfile.img'; then
+        warn "Swap already active"
+        return
+    fi
+    TOTAL_RAM_MB=$(grep MemTotal /proc/meminfo | awk '{print int($2/1024)}')
+    SWAP_SIZE_MB=$(( TOTAL_RAM_MB <= 16384 ? TOTAL_RAM_MB : 16384 ))
+    if [ -f /swapfile.img ]; then
+        chmod 0600 /swapfile.img
+    else
+        fallocate -l "${SWAP_SIZE_MB}M" /swapfile.img
+        chmod 0600 /swapfile.img
+    fi
+    mkswap /swapfile.img
+    swapon /swapfile.img
+    grep -q '/swapfile.img' /etc/fstab || echo '/swapfile.img none swap sw 0 0' >> /etc/fstab
+    sysctl vm.swappiness=10
+    grep -q 'vm.swappiness' /etc/sysctl.conf || echo 'vm.swappiness=10' >> /etc/sysctl.conf
+    log "${SWAP_SIZE_MB}MB swap configured (swappiness=10)"
+}
+
+setup_auto_updates() {
+    log "Enabling automatic security updates..."
+    apt-get install -y unattended-upgrades
+    cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'EOF'
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+};
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+EOF
+    systemctl enable unattended-upgrades
+    systemctl start unattended-upgrades
+    log "Auto-updates enabled"
 }
 
 install_homebrew() {
     log "Installing Homebrew..."
-    
-    if command -v brew &> /dev/null; then
-        warn "Homebrew already installed"
-        return
-    fi
-    
-    # Install Homebrew (Linuxbrew)
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    
-    # Add to path for current session and new user
+    if command -v brew &>/dev/null; then warn "Already installed"; return; fi
+    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     if ! grep -q 'linuxbrew' /root/.bashrc 2>/dev/null; then
         echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /root/.bashrc
     fi
     eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-
-    # Also add to new user
     if ! grep -q 'linuxbrew' "/home/$NEW_USER/.bashrc" 2>/dev/null; then
         echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> "/home/$NEW_USER/.bashrc"
     fi
     chown "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.bashrc"
-    
     brew install gcc
     log "Homebrew installed"
 }
 
+install_node() {
+    log "Installing Node.js 22..."
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    apt-get install -y nodejs
+    log "Node.js $(node --version) installed"
+}
+
 install_docker() {
     log "Installing Docker..."
-    
-    if command -v docker &> /dev/null; then
-        warn "Docker already installed"
-        return
-    fi
-    
-    # Remove old versions
+    if command -v docker &>/dev/null; then warn "Already installed"; return; fi
     apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
-    
-    # Add Docker's official GPG key
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
     chmod a+r /etc/apt/keyrings/docker.gpg
-    
-    # Add repository
-    echo \
-        "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-        "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | \
-        tee /etc/apt/sources.list.d/docker.list > /dev/null
-    
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
     apt-get update
     apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    
-    # Add user to docker group
     usermod -aG docker "$NEW_USER"
-    
-    systemctl enable docker
-    systemctl start docker
-    
-    log "Docker installed. User $NEW_USER added to docker group."
+    systemctl enable docker && systemctl start docker
+    log "Docker installed"
 }
 
-install_node() {
-    log "Installing Node.js 22.x (via Nodesource)..."
+install_claude_code() {
+    log "Installing Claude Code..."
+    su - "$NEW_USER" -c 'curl -fsSL https://claude.ai/install.sh | bash' || warn "Claude Code install failed — install manually later"
+}
 
-    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-    apt-get install -y nodejs
-
-    log "Node.js $(node --version) installed"
+install_codex() {
+    log "Installing Codex..."
+    su - "$NEW_USER" -c "npm install -g @openai/codex" || warn "Codex install failed — install manually later"
 }
 
 install_openclaw_deps() {
     log "Installing OpenClaw dependencies..."
-
-    # Install bun as the target user directly (avoids mv /root/.bun failures on re-run)
     su - "$NEW_USER" -c 'curl -fsSL https://bun.sh/install | bash'
-
-    # Ensure bun is in PATH
     if ! grep -q '\.bun/bin' "/home/$NEW_USER/.bashrc" 2>/dev/null; then
         echo 'export PATH="$HOME/.bun/bin:$PATH"' >> "/home/$NEW_USER/.bashrc"
     fi
-
-    log "OpenClaw dependencies installed"
 }
 
 install_openclaw() {
     log "Installing OpenClaw (as $NEW_USER)..."
-
-    # Install as user to avoid dual-install issues with root vs user node_modules
     su - "$NEW_USER" -c "npm install -g openclaw"
-
-    # Create config directory
     mkdir -p "/home/$NEW_USER/.config/openclaw"
     chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.config"
-
     if [ -n "$OPENCLAW_CONFIG" ] && [ -f "$OPENCLAW_CONFIG" ]; then
-        log "Using provided config: $OPENCLAW_CONFIG"
         cp "$OPENCLAW_CONFIG" "/home/$NEW_USER/.config/openclaw/config.json"
         chown "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.config/openclaw/config.json"
     fi
+    log "OpenClaw installed"
+}
 
-    log "OpenClaw installed to user-local path"
+install_security_md() {
+    log "Installing SECURITY.md..."
+    local SCRIPT_DIR
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    mkdir -p "/home/$NEW_USER/.openclaw/workspace"
+    if [ -f "$SCRIPT_DIR/scripts/security-md-template.sh" ]; then
+        bash "$SCRIPT_DIR/scripts/security-md-template.sh" "/home/$NEW_USER/.openclaw/workspace/SECURITY.md"
+    else
+        curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/scripts/security-md-template.sh | \
+            bash -s -- "/home/$NEW_USER/.openclaw/workspace/SECURITY.md"
+    fi
+    chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.openclaw"
+}
+
+setup_secrets_file() {
+    log "Setting up secrets file..."
+    if [ -f /etc/openclaw-secrets ]; then warn "Already exists"; return; fi
+    cat > /etc/openclaw-secrets << 'EOF'
+# OpenClaw secrets — managed by EasyClaw
+# Loaded by openclaw-gateway systemd service.
+# OP_SERVICE_ACCOUNT_TOKEN=
+EOF
+    chmod 0600 /etc/openclaw-secrets
+    chown root:root /etc/openclaw-secrets
+    log "Created /etc/openclaw-secrets (root:root 600)"
+}
+
+install_op_audit_wrapper() {
+    local OP_REAL="/home/${NEW_USER}/.local/bin/op.real"
+    local OP_PATH="/home/${NEW_USER}/.local/bin/op"
+    if [ ! -f "$OP_PATH" ] || [ -f "$OP_REAL" ]; then return; fi
+    log "Installing 1Password audit wrapper..."
+    mv "$OP_PATH" "$OP_REAL"
+    cat > "$OP_PATH" << 'WRAPPER'
+#!/bin/bash
+LOG_DIR="$HOME/.openclaw/logs"
+mkdir -p "$LOG_DIR"
+echo "$(date -Iseconds) [op] $*" >> "$LOG_DIR/op-audit.log"
+exec "$HOME/.local/bin/op.real" "$@"
+WRAPPER
+    chmod +x "$OP_PATH"
+    chown "$NEW_USER:$NEW_USER" "$OP_PATH" "$OP_REAL"
 }
 
 setup_openclaw_service() {
     log "Creating OpenClaw gateway systemd service..."
-
     local OPENCLAW_BIN
     OPENCLAW_BIN=$(su - "$NEW_USER" -c "which openclaw" 2>/dev/null || echo "/home/$NEW_USER/.local/bin/openclaw")
-
     cat > /etc/systemd/system/openclaw-gateway.service << EOF
 [Unit]
 Description=OpenClaw Gateway
@@ -483,263 +660,45 @@ TimeoutStopSec=30
 [Install]
 WantedBy=multi-user.target
 EOF
-
     systemctl daemon-reload
     systemctl enable openclaw-gateway
-
     log "OpenClaw gateway service created"
-    log "Start with: sudo systemctl start openclaw-gateway"
-}
-
-setup_swap() {
-    log "Setting up swap..."
-
-    if swapon --show | grep -q '/swapfile.img'; then
-        warn "Swap already active at /swapfile.img"
-        return
-    fi
-
-    # Dynamic swap sizing based on available RAM
-    TOTAL_RAM_MB=$(grep MemTotal /proc/meminfo | awk '{print int($2/1024)}')
-    if [ "$TOTAL_RAM_MB" -le 16384 ]; then
-        SWAP_SIZE_MB=$TOTAL_RAM_MB
-    else
-        SWAP_SIZE_MB=16384
-    fi
-
-    if [ -f /swapfile.img ]; then
-        warn "/swapfile.img exists but is not active, activating..."
-        chmod 0600 /swapfile.img
-        mkswap /swapfile.img
-        swapon /swapfile.img
-    else
-        fallocate -l "${SWAP_SIZE_MB}M" /swapfile.img
-        chmod 0600 /swapfile.img
-        mkswap /swapfile.img
-        swapon /swapfile.img
-    fi
-
-    # Persist in fstab
-    if ! grep -q '/swapfile.img' /etc/fstab; then
-        echo '/swapfile.img none swap sw 0 0' >> /etc/fstab
-    fi
-
-    # Lower swappiness — prefer RAM, use swap as safety net
-    sysctl vm.swappiness=10
-    if ! grep -q 'vm.swappiness' /etc/sysctl.conf; then
-        echo 'vm.swappiness=10' >> /etc/sysctl.conf
-    fi
-
-    log "${SWAP_SIZE_MB}MB swap configured (swappiness=10)"
-}
-
-install_claude_code() {
-    log "Installing Claude Code CLI..."
-    su - "$NEW_USER" -c 'curl -fsSL https://claude.ai/install.sh | bash' || warn "Claude Code install failed — install manually later"
-    log "Claude Code CLI install step completed"
-}
-
-install_codex() {
-    log "Installing Codex CLI..."
-    su - "$NEW_USER" -c "npm install -g @openai/codex" || warn "Codex install failed — install manually later"
-    log "Codex CLI install step completed"
-}
-
-install_security_md() {
-    log "Installing SECURITY.md template..."
-
-    local SCRIPT_DIR
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-    mkdir -p "/home/$NEW_USER/.openclaw/workspace"
-    if [ -f "$SCRIPT_DIR/scripts/security-md-template.sh" ]; then
-        bash "$SCRIPT_DIR/scripts/security-md-template.sh" "/home/$NEW_USER/.openclaw/workspace/SECURITY.md"
-    else
-        curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/scripts/security-md-template.sh | \
-            bash -s -- "/home/$NEW_USER/.openclaw/workspace/SECURITY.md"
-    fi
-
-    chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.openclaw"
-    log "SECURITY.md installed at ~/.openclaw/workspace/SECURITY.md"
-}
-
-setup_secrets_file() {
-    log "Setting up secrets file..."
-
-    if [ -f /etc/openclaw-secrets ]; then
-        warn "/etc/openclaw-secrets already exists, skipping"
-        return
-    fi
-
-    cat > /etc/openclaw-secrets << 'EOF'
-# OpenClaw secrets — managed by setup.sh
-# Add environment variables here; they are loaded by the openclaw-gateway service.
-# OP_SERVICE_ACCOUNT_TOKEN=
-EOF
-
-    chmod 0600 /etc/openclaw-secrets
-    chown root:root /etc/openclaw-secrets
-
-    log "Created /etc/openclaw-secrets (root:root 600)"
-    log "Edit it to add your OP_SERVICE_ACCOUNT_TOKEN or other secrets"
-}
-
-install_op_audit_wrapper() {
-    log "Installing 1Password CLI audit wrapper..."
-
-    local OP_REAL="/home/${NEW_USER}/.local/bin/op.real"
-    local OP_PATH="/home/${NEW_USER}/.local/bin/op"
-
-    # Only wrap if op is installed at the expected path
-    if [ ! -f "$OP_PATH" ] || [ -f "$OP_REAL" ]; then
-        warn "op not found at $OP_PATH or already wrapped, skipping"
-        return
-    fi
-
-    mv "$OP_PATH" "$OP_REAL"
-
-    cat > "$OP_PATH" << 'WRAPPER'
-#!/bin/bash
-# Audit wrapper for 1Password CLI — logs all invocations
-LOG_DIR="$HOME/.openclaw/logs"
-mkdir -p "$LOG_DIR"
-echo "$(date -Iseconds) [op] $*" >> "$LOG_DIR/op-audit.log"
-exec "$HOME/.local/bin/op.real" "$@"
-WRAPPER
-
-    chmod +x "$OP_PATH"
-    chown "$NEW_USER:$NEW_USER" "$OP_PATH" "$OP_REAL"
-
-    log "op audit wrapper installed (logs to ~/.openclaw/logs/op-audit.log)"
-}
-
-setup_auto_updates() {
-    log "Configuring automatic security updates..."
-
-    apt-get install -y unattended-upgrades
-
-    cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'EOF'
-Unattended-Upgrade::Allowed-Origins {
-    "${distro_id}:${distro_codename}-security";
-};
-Unattended-Upgrade::Automatic-Reboot "false";
-Unattended-Upgrade::Remove-Unused-Dependencies "true";
-EOF
-
-    systemctl enable unattended-upgrades
-    systemctl start unattended-upgrades
-
-    log "Automatic security updates enabled"
 }
 
 setup_tmp_cleanup() {
     log "Installing /tmp cleanup cron..."
-
-    # Install the cleanup script
     local SCRIPT_DIR
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
     mkdir -p "/home/$NEW_USER/.local/bin"
     if [ -f "$SCRIPT_DIR/scripts/tmp-cleanup.sh" ]; then
         cp "$SCRIPT_DIR/scripts/tmp-cleanup.sh" "/home/$NEW_USER/.local/bin/tmp-cleanup"
     else
-        # Fetch from repo if running via curl pipe
         curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/scripts/tmp-cleanup.sh \
             -o "/home/$NEW_USER/.local/bin/tmp-cleanup"
     fi
     chmod +x "/home/$NEW_USER/.local/bin/tmp-cleanup"
     chown "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.local/bin/tmp-cleanup"
-
-    # Ensure ~/.local/bin is in PATH
     if ! grep -q '\.local/bin' "/home/$NEW_USER/.bashrc" 2>/dev/null; then
         echo 'export PATH="$HOME/.local/bin:$PATH"' >> "/home/$NEW_USER/.bashrc"
     fi
-
-    # Install cron job (as the service user, not root)
     local EXISTING_CRON
     EXISTING_CRON=$(su - "$NEW_USER" -c 'crontab -l 2>/dev/null' || true)
-    if echo "$EXISTING_CRON" | grep -q 'tmp-cleanup'; then
-        warn "tmp-cleanup cron already exists"
-    else
-        (echo "$EXISTING_CRON"; echo "0 4 * * * /home/$NEW_USER/.local/bin/tmp-cleanup >/dev/null 2>&1 # Safe /tmp cleanup (indexes CASS first)") \
+    if ! echo "$EXISTING_CRON" | grep -q 'tmp-cleanup'; then
+        (echo "$EXISTING_CRON"; echo "0 4 * * * /home/$NEW_USER/.local/bin/tmp-cleanup >/dev/null 2>&1") \
             | su - "$NEW_USER" -c 'crontab -'
     fi
-
-    # Also install CASS auto-index cron if cass is available
-    if su - "$NEW_USER" -c 'command -v cass' &>/dev/null; then
-        if ! echo "$EXISTING_CRON" | grep -q 'cass index'; then
-            (su - "$NEW_USER" -c 'crontab -l 2>/dev/null'; echo "*/30 * * * * \$(command -v cass) index --json >/dev/null 2>&1 # Auto-index CASS sessions") \
-                | su - "$NEW_USER" -c 'crontab -'
-            log "CASS auto-index cron installed (every 30 minutes)"
-        fi
-    fi
-
-    log "/tmp cleanup installed: runs daily at 4am, removes files older than 2 days"
-    log "Manual usage: tmp-cleanup --dry-run --verbose"
+    log "/tmp cleanup installed (daily at 4am)"
 }
 
-print_summary() {
-    echo ""
-    echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║          VPS Setup Complete!             ║${NC}"
-    echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
-    echo ""
-    echo "  User:        $NEW_USER"
-    echo "  SSH port:    $SSH_PORT"
-    echo "  Swap:        dynamic (based on RAM)"
-    echo ""
-    echo "  Installed:"
-    echo "    - Node.js 22, Homebrew"
-    [ "$INSTALL_DOCKER" = true ]      && echo "    - Docker"
-    [ "$INSTALL_CLAUDE_CODE" = true ] && echo "    - Claude Code"
-    [ "$INSTALL_CODEX" = true ]       && echo "    - Codex"
-    [ "$INSTALL_OPENCLAW" = true ]    && echo "    - OpenClaw"
-    echo ""
-
-    if [ "$INSTALL_OPENCLAW" = true ]; then
-        echo "  OpenClaw commands:"
-        echo "    Start gateway:  sudo systemctl start openclaw-gateway"
-        echo "    Check status:   sudo systemctl status openclaw-gateway"
-        echo "    View logs:      sudo journalctl -u openclaw-gateway -f"
-        echo ""
-        echo "  Post-setup:"
-        echo "    - Edit /etc/openclaw-secrets to add any extra secrets"
-        echo "    - Review ~/.openclaw/workspace/SECURITY.md"
-        echo ""
-    else
-        echo "  Next steps:"
-        echo "    1. Copy your SSH key:"
-        echo "       ssh-copy-id $NEW_USER@<server-ip>"
-        echo ""
-        echo "    2. Switch to the new user:"
-        echo "       su - $NEW_USER"
-        echo ""
-        echo "    3. Install OpenClaw later:"
-        echo "       npm install -g openclaw && openclaw onboard"
-        echo ""
-    fi
-
-    echo -e "  ${YELLOW}IMPORTANT:${NC} Test SSH access as $NEW_USER before closing this session!"
-    echo ""
-}
-
-# Main
-main() {
-    parse_args "$@"
-
+server_main() {
     check_root
 
-    # Run interactive wizard (unless --no-wizard or piped input)
-    if [ "$RUN_WIZARD" = true ] && [ -t 0 ]; then
-        run_wizard
-    else
-        log "Starting VPS setup for OpenClaw..."
-    fi
+    log "Starting EasyClaw server setup..."
 
-    # System hardening (always)
+    # System hardening
     update_system
     create_user
-    setup_ssh
+    setup_ssh_hardening
     setup_firewall
     setup_fail2ban
     setup_swap
@@ -748,53 +707,76 @@ main() {
     # Package managers & tools
     install_homebrew
     install_node
-
-    if [ "$INSTALL_DOCKER" = true ]; then
-        install_docker
-    fi
-
-    if [ "$INSTALL_CLAUDE_CODE" = true ]; then
-        install_claude_code
-    fi
-
-    if [ "$INSTALL_CODEX" = true ]; then
-        install_codex
-    fi
+    [ "$INSTALL_DOCKER" = true ] && install_docker
+    [ "$INSTALL_CLAUDE_CODE" = true ] && install_claude_code
+    [ "$INSTALL_CODEX" = true ] && install_codex
 
     # Cleanup
     setup_tmp_cleanup
 
-    # OpenClaw (if selected)
-    if [ "$INSTALL_OPENCLAW" = true ]; then
-        install_openclaw_deps
-        install_openclaw
-        install_security_md
+    # OpenClaw (always in EasyClaw)
+    install_openclaw_deps
+    install_openclaw
+    install_security_md
 
-        # Launch OpenClaw's own onboarding (interactive)
-        # This handles: API keys, Telegram, 1Password, Tailscale, gateway config
-        echo ""
-        echo -e "${GREEN}── OpenClaw Onboarding ─────────────────────${NC}"
-        echo ""
-        echo "  OpenClaw will now run its own setup wizard."
-        echo "  It will ask you to paste API keys for the services"
-        echo "  you want to connect. Follow the prompts."
-        echo ""
-        su - "$NEW_USER" -c "openclaw onboard" || warn "openclaw onboard exited non-zero — continuing with post-onboarding setup"
+    # OpenClaw onboarding (interactive — asks for API keys)
+    echo ""
+    echo -e "${GREEN}── OpenClaw Onboarding ─────────────────────${NC}"
+    echo ""
+    echo "  OpenClaw will now ask for your API keys."
+    echo "  Follow the prompts."
+    echo ""
+    su - "$NEW_USER" -c "openclaw onboard" || warn "openclaw onboard exited non-zero — continuing"
 
-        # Post-onboarding hardening (must run even if onboard failed)
-        setup_secrets_file
-        install_op_audit_wrapper
-        setup_openclaw_service
+    # Post-onboarding
+    setup_secrets_file
+    install_op_audit_wrapper
+    setup_openclaw_service
 
-        # Run security audit
-        log "Running OpenClaw security audit..."
-        su - "$NEW_USER" -c "openclaw security audit --fix" || warn "Security audit returned non-zero (review output above)"
-    fi
+    log "Running OpenClaw security audit..."
+    su - "$NEW_USER" -c "openclaw security audit --fix" || warn "Security audit returned non-zero"
 
-    print_summary
+    echo ""
+    echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║      Server Setup Complete!              ║${NC}"
+    echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
+    echo ""
 }
 
-# Run main if executed directly
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    main "$@"
+# =====================================================================
+#  ENTRYPOINT
+# =====================================================================
+
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --on-server) ON_SERVER=true; shift ;;
+            --no-wizard) RUN_WIZARD=false; shift ;;
+            --help|-h)
+                echo "EasyClaw — One command to launch a secure OpenClaw server"
+                echo ""
+                echo "Usage:"
+                echo "  curl -fsSL .../setup.sh | bash        Run the wizard (from your laptop)"
+                echo "  ./setup.sh --on-server                Run server setup (called automatically)"
+                echo ""
+                echo "Environment variables (headless mode):"
+                echo "  HETZNER_TOKEN     Hetzner API token (required)"
+                echo "  SERVER_TYPE       cpx11/cpx21/cpx31/cpx41 (default: cpx21)"
+                echo "  SERVER_LOCATION   ash/hil/nbg1/hel1 (default: ash)"
+                echo "  NEW_USER          Username (default: claw)"
+                echo "  SSH_KEY_PATH      Path to SSH private key"
+                exit 0
+                ;;
+            *) error "Unknown option: $1" ;;
+        esac
+    done
+}
+
+ON_SERVER=false
+parse_args "$@"
+
+if [ "$ON_SERVER" = true ]; then
+    server_main
+else
+    local_main
 fi
