@@ -1,0 +1,31 @@
+{
+  "_comment": "OpenClaw automated setup configuration - copy to openclaw-config.json and customize",
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": 7860,
+    "authToken": "${random_token_32_chars}"
+  },
+  "providers": {
+    "telegram": {
+      "enabled": true,
+      "botToken": "${TELEGRAM_BOT_TOKEN}"
+    },
+    "discord": {
+      "enabled": false,
+      "botToken": ""
+    },
+    "slack": {
+      "enabled": false,
+      "botToken": ""
+    }
+  },
+  "models": {
+    "default": "kimi-coding/k2p5",
+    "thinking": "off"
+  },
+  "features": {
+    "voice": true,
+    "webSearch": true,
+    "browser": true
+  }
+}

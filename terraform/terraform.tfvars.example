@@ -1,0 +1,14 @@
+# EasyClaw Terraform Variables
+# Copy this file to terraform.tfvars and fill in your values
+
+# Get your API token from: https://console.hetzner.cloud/projects/[project]/security/tokens
+hcloud_token = "your-hetzner-api-token-here"
+
+# Server configuration
+server_name = "openclaw-prod"
+server_type = "cpx21"  # cpx11 (4GB), cpx21 (8GB), cpx31 (16GB)
+location    = "ash"    # ash=Ashburn, nbg=Nuremberg, fsn=Falkenstein
+
+# Your SSH public key (content, not path)
+# Get it with: cat ~/.ssh/id_ed25519.pub
+ssh_public_key = "ssh-ed25519 AAAAC3NzaC... your-email@example.com"
