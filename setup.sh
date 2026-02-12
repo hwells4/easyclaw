@@ -275,6 +275,7 @@ run_wizard_local() {
     test_response=$(hetzner_api GET /servers 2>/dev/null || true)
     if echo "$test_response" | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'servers' in d" 2>/dev/null; then
         echo -e "${GREEN}valid!${NC}"
+        echo "  Your token is only used during this setup and is never saved to disk."
     else
         echo -e "${RED}invalid${NC}"
         error "That token didn't work. Double-check it and run the script again."
