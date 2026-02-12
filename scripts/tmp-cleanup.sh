@@ -4,7 +4,7 @@
 # Indexes CASS (if available) then removes stale temp files while
 # preserving anything currently in use by active processes.
 #
-# Install: EasyClaw installs this to ~/.local/bin/tmp-cleanup
+# Install: setup.sh installs this to ~/.local/bin/tmp-cleanup
 # Cron:    Runs daily at 4am via crontab
 # Logs:    journalctl -t tmp-cleanup
 

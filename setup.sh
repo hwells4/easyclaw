@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# EasyClaw — One-script setup for a secure OpenClaw server
-# https://github.com/hwells4/easyclaw
+# VPS Setup Script for OpenClaw
+# Hardens a fresh VPS and installs dependencies
 #
 
 set -euo pipefail
@@ -24,15 +24,15 @@ INSTALL_CODEX="${INSTALL_CODEX:-true}"
 RUN_WIZARD="${RUN_WIZARD:-true}"
 
 log() {
-    echo -e "${GREEN}[easyclaw]${NC} $1"
+    echo -e "${GREEN}[SETUP]${NC} $1"
 }
 
 warn() {
-    echo -e "${YELLOW}[warn]${NC} $1"
+    echo -e "${YELLOW}[WARN]${NC} $1"
 }
 
 error() {
-    echo -e "${RED}[error]${NC} $1"
+    echo -e "${RED}[ERROR]${NC} $1"
     exit 1
 }
 
@@ -62,11 +62,11 @@ ask_yes_no() {
 run_wizard() {
     echo ""
     echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║          EasyClaw Setup Wizard           ║${NC}"
+    echo -e "${GREEN}║        OpenClaw VPS Setup Wizard         ║${NC}"
     echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
     echo ""
-    echo "  Quick, easy, and secure OpenClaw setup."
-    echo "  One script. One wizard. Done."
+    echo "  This wizard will walk you through setting up your server."
+    echo "  You can skip anything you're not ready for yet."
     echo ""
 
     # ── Server size recommendation ──
@@ -207,8 +207,6 @@ parse_args() {
                 shift
                 ;;
             --help|-h)
-                echo "EasyClaw — One-script OpenClaw server setup"
-                echo ""
                 echo "Usage: $0 [OPTIONS]"
                 echo ""
                 echo "Options:"
@@ -262,16 +260,19 @@ update_system() {
 
 create_user() {
     log "Creating user: $NEW_USER"
-
+    
     if id "$NEW_USER" &>/dev/null; then
         warn "User $NEW_USER already exists"
         return
     fi
-
+    
     # Create user with sudo access
     useradd -m -s /bin/bash "$NEW_USER"
     usermod -aG sudo "$NEW_USER"
-
+    
+    # Allow passwordless sudo for specific commands (optional, more secure)
+    # echo "$NEW_USER ALL=(ALL) NOPASSWD: /bin/systemctl" > /etc/sudoers.d/"$NEW_USER"
+    
     log "User $NEW_USER created. Set a password:"
     passwd "$NEW_USER" || warn "passwd failed — set password manually later with: sudo passwd $NEW_USER"
 }
@@ -281,8 +282,8 @@ setup_ssh() {
 
     # Use a drop-in file for idempotent, non-destructive hardening
     mkdir -p /etc/ssh/sshd_config.d
-    cat > /etc/ssh/sshd_config.d/99-easyclaw-hardening.conf << 'EOF'
-# Security hardening applied by EasyClaw
+    cat > /etc/ssh/sshd_config.d/99-openclaw-hardening.conf << 'EOF'
+# Security hardening applied by OpenClaw setup
 PermitRootLogin no
 PasswordAuthentication no
 PubkeyAuthentication yes
@@ -296,7 +297,7 @@ EOF
         systemctl restart sshd
         log "SSH configured. Root login disabled, key auth only."
     else
-        error "sshd config validation failed — check /etc/ssh/sshd_config.d/99-easyclaw-hardening.conf"
+        error "sshd config validation failed — check /etc/ssh/sshd_config.d/99-openclaw-hardening.conf"
     fi
     warn "Make sure you have SSH key access before disconnecting!"
 }
@@ -321,7 +322,7 @@ setup_firewall() {
 
 setup_fail2ban() {
     log "Configuring Fail2ban..."
-
+    
     # Create custom jail config
     cat > /etc/fail2ban/jail.local << EOF
 [DEFAULT]
@@ -336,7 +337,7 @@ filter = sshd
 logpath = /var/log/auth.log
 maxretry = 3
 EOF
-
+    
     systemctl enable fail2ban
     systemctl start fail2ban
     log "Fail2ban configured and started"
@@ -344,15 +345,15 @@ EOF
 
 install_homebrew() {
     log "Installing Homebrew..."
-
+    
     if command -v brew &> /dev/null; then
         warn "Homebrew already installed"
         return
     fi
-
+    
     # Install Homebrew (Linuxbrew)
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
+    
     # Add to path for current session and new user
     if ! grep -q 'linuxbrew' /root/.bashrc 2>/dev/null; then
         echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /root/.bashrc
@@ -364,42 +365,42 @@ install_homebrew() {
         echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> "/home/$NEW_USER/.bashrc"
     fi
     chown "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.bashrc"
-
+    
     brew install gcc
     log "Homebrew installed"
 }
 
 install_docker() {
     log "Installing Docker..."
-
+    
     if command -v docker &> /dev/null; then
         warn "Docker already installed"
         return
     fi
-
+    
     # Remove old versions
     apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
-
+    
     # Add Docker's official GPG key
     install -m 0755 -d /etc/apt/keyrings
     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
     chmod a+r /etc/apt/keyrings/docker.gpg
-
+    
     # Add repository
     echo \
         "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
         "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | \
         tee /etc/apt/sources.list.d/docker.list > /dev/null
-
+    
     apt-get update
     apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
+    
     # Add user to docker group
     usermod -aG docker "$NEW_USER"
-
+    
     systemctl enable docker
     systemctl start docker
-
+    
     log "Docker installed. User $NEW_USER added to docker group."
 }
 
@@ -571,7 +572,7 @@ setup_secrets_file() {
     fi
 
     cat > /etc/openclaw-secrets << 'EOF'
-# OpenClaw secrets — managed by EasyClaw setup
+# OpenClaw secrets — managed by setup.sh
 # Add environment variables here; they are loaded by the openclaw-gateway service.
 # OP_SERVICE_ACCOUNT_TOKEN=
 EOF
@@ -680,7 +681,7 @@ setup_tmp_cleanup() {
 print_summary() {
     echo ""
     echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║        EasyClaw Setup Complete!          ║${NC}"
+    echo -e "${GREEN}║          VPS Setup Complete!             ║${NC}"
     echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
     echo ""
     echo "  User:        $NEW_USER"
@@ -732,7 +733,7 @@ main() {
     if [ "$RUN_WIZARD" = true ] && [ -t 0 ]; then
         run_wizard
     else
-        log "Starting EasyClaw setup..."
+        log "Starting VPS setup for OpenClaw..."
     fi
 
     # System hardening (always)
@@ -770,6 +771,7 @@ main() {
         install_security_md
 
         # Launch OpenClaw's own onboarding (interactive)
+        # This handles: API keys, Telegram, 1Password, Tailscale, gateway config
         echo ""
         echo -e "${GREEN}── OpenClaw Onboarding ─────────────────────${NC}"
         echo ""

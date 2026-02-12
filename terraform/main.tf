@@ -136,11 +136,12 @@ Server created! Next steps:
 2. SSH into the server:
    ssh claw@${hcloud_server.openclaw.ipv4_address}
 
-3. Run EasyClaw:
+3. Run the VPS setup script:
    curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh | sudo bash
 
-4. Or with OpenClaw auto-install:
-   curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh | sudo bash -s -- --install-openclaw
+4. Install OpenClaw:
+   npm install -g openclaw
+   openclaw setup
 
 To destroy (stops billing):
    terraform destroy

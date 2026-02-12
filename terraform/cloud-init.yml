@@ -37,27 +37,27 @@ runcmd:
   - ufw allow 443/tcp
   - ufw allow 7860/tcp
   - ufw --force enable
-
+  
   # Basic fail2ban config
   - systemctl enable fail2ban
   - systemctl start fail2ban
-
+  
   # Create welcome message
   - |
-    cat > /etc/update-motd.d/99-easyclaw << 'MOTD'
+    cat > /etc/update-motd.d/99-openclaw << 'MOTD'
     #!/bin/bash
     echo ""
     echo "========================================"
-    echo "  EasyClaw — Ready for setup"
+    echo "  OpenClaw Server - Ready for setup"
     echo "========================================"
     echo ""
-    echo "Run EasyClaw:"
+    echo "Run basic setup:"
     echo "  curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh | sudo bash"
     echo ""
     echo "Or with OpenClaw auto-install:"
     echo "  curl -fsSL https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh | sudo bash -s -- --install-openclaw"
     echo ""
     MOTD
-  - chmod +x /etc/update-motd.d/99-easyclaw
+  - chmod +x /etc/update-motd.d/99-openclaw
 
 final_message: "Server initialization complete. Run 'ssh claw@<ip>' to connect."

@@ -1,4 +1,5 @@
-# EasyClaw Terraform Variables
+# Hetzner Cloud Terraform Example
+
 # Copy this file to terraform.tfvars and fill in your values
 
 # Get your API token from: https://console.hetzner.cloud/projects/[project]/security/tokens
