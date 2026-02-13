@@ -384,22 +384,32 @@ print_final_summary() {
     echo -e "${GREEN}║        EasyClaw Setup Complete!          ║${NC}"
     echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
     echo ""
-    echo "  Server IP:   $SERVER_IP"
-    echo "  SSH user:    $NEW_USER"
-    echo "  SSH key:     $EASYCLAW_SSH_KEY"
+    echo "  Your server is built, secured, and ready to go."
     echo ""
-    echo "  Connect:"
+    echo "  ── What's Next ──"
+    echo ""
+    echo "  Run this command to finish setting up OpenClaw:"
+    echo ""
+    echo -e "    ${BOLD}ssh -t -i $EASYCLAW_SSH_KEY $NEW_USER@$SERVER_IP${NC}"
+    echo ""
+    echo "  Once connected, run:"
+    echo -e "    ${BOLD}openclaw onboard --install-daemon${NC}"
+    echo ""
+    echo "  OpenClaw will walk you through connecting your API keys"
+    echo "  (Anthropic, OpenAI, etc). Just follow the prompts."
+    echo ""
+    echo "  ── Useful Commands ──"
+    echo ""
+    echo "  Connect to your server any time:"
     echo "    ssh -i $EASYCLAW_SSH_KEY $NEW_USER@$SERVER_IP"
     echo ""
-    echo "  OpenClaw commands (on server):"
-    echo "    sudo systemctl status openclaw-gateway"
-    echo "    sudo journalctl -u openclaw-gateway -f"
+    echo "  ── Thanks for using EasyClaw! ──"
     echo ""
-    echo "  Manage secrets:"
-    echo "    sudo vim /etc/openclaw-secrets"
-    echo "    sudo systemctl restart openclaw-gateway"
+    echo "  If this helped, we'd love a star on GitHub:"
+    echo -e "  ${BLUE}https://github.com/hwells4/easyclaw${NC}"
     echo ""
-    echo -e "  ${GREEN}Your OpenClaw server is running!${NC}"
+    echo "  Questions or feedback? Open an issue or book a call:"
+    echo -e "  ${BLUE}https://github.com/hwells4/easyclaw/issues${NC}"
     echo ""
 }
 
@@ -770,21 +780,9 @@ server_main() {
     install_openclaw
     install_security_md
 
-    # OpenClaw onboarding (interactive — asks for API keys)
-    echo ""
-    echo -e "${GREEN}── OpenClaw Onboarding ─────────────────────${NC}"
-    echo ""
-    echo "  OpenClaw will now ask for your API keys."
-    echo "  Follow the prompts."
-    echo ""
-    su - "$NEW_USER" -c 'export PATH="$HOME/.npm-global/bin:$HOME/.bun/bin:$PATH" && openclaw onboard --install-daemon' || warn "openclaw onboard exited non-zero — continuing"
-
-    # Post-onboarding extras
+    # Post-install extras (before onboarding)
     setup_secrets_file
     install_op_audit_wrapper
-
-    log "Running OpenClaw security audit..."
-    su - "$NEW_USER" -c 'export PATH="$HOME/.npm-global/bin:$HOME/.bun/bin:$PATH" && openclaw security audit --fix' || warn "Security audit returned non-zero"
 
     echo ""
     echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
