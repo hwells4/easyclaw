@@ -183,7 +183,7 @@ wait_for_server() {
     local max_attempts=60  # 5 minutes
 
     while [ $attempts -lt $max_attempts ]; do
-        if ssh -i "$EASYCLAW_SSH_KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes root@"$SERVER_IP" "echo ok" &>/dev/null; then
+        if ssh -i "$EASYCLAW_SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o BatchMode=yes root@"$SERVER_IP" "echo ok" &>/dev/null; then
             log "Server is ready!"
             return
         fi
@@ -202,7 +202,7 @@ run_remote_setup() {
     echo ""
 
     local script_url="https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh"
-    local ssh_opts="-i $EASYCLAW_SSH_KEY -o StrictHostKeyChecking=no"
+    local ssh_opts="-i $EASYCLAW_SSH_KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
 
     # Download script to server first (keeps stdin free for interactive prompts)
     ssh $ssh_opts root@"$SERVER_IP" \
@@ -640,7 +640,7 @@ install_openclaw_deps() {
 
 install_openclaw() {
     log "Installing OpenClaw..."
-    quiet "Downloading OpenClaw" su - "$NEW_USER" -c "npm install -g openclaw"
+    quiet "Downloading OpenClaw" su - "$NEW_USER" -c 'export PATH="$HOME/.npm-global/bin:$PATH" && npm install -g openclaw'
     mkdir -p "/home/$NEW_USER/.config/openclaw"
     chown -R "$NEW_USER:$NEW_USER" "/home/$NEW_USER/.config"
     if [ -n "$OPENCLAW_CONFIG" ] && [ -f "$OPENCLAW_CONFIG" ]; then
@@ -769,14 +769,14 @@ server_main() {
     echo "  OpenClaw will now ask for your API keys."
     echo "  Follow the prompts."
     echo ""
-    su - "$NEW_USER" -c "openclaw onboard --install-daemon" || warn "openclaw onboard exited non-zero — continuing"
+    su - "$NEW_USER" -c 'export PATH="$HOME/.npm-global/bin:$HOME/.bun/bin:$PATH" && openclaw onboard --install-daemon' || warn "openclaw onboard exited non-zero — continuing"
 
     # Post-onboarding extras
     setup_secrets_file
     install_op_audit_wrapper
 
     log "Running OpenClaw security audit..."
-    su - "$NEW_USER" -c "openclaw security audit --fix" || warn "Security audit returned non-zero"
+    su - "$NEW_USER" -c 'export PATH="$HOME/.npm-global/bin:$HOME/.bun/bin:$PATH" && openclaw security audit --fix' || warn "Security audit returned non-zero"
 
     echo ""
     echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
