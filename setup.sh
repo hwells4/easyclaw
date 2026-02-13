@@ -202,7 +202,7 @@ run_remote_setup() {
     echo ""
 
     local script_url="https://raw.githubusercontent.com/hwells4/easyclaw/main/setup.sh"
-    local ssh_opts="-i $EASYCLAW_SSH_KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+    local ssh_opts="-i $EASYCLAW_SSH_KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 
     # Download script to server first (keeps stdin free for interactive prompts)
     ssh $ssh_opts root@"$SERVER_IP" \
@@ -729,7 +729,9 @@ server_main() {
     log "Starting EasyClaw server setup..."
     log "Full install log: $SETUP_LOG"
 
-    # System hardening
+    # System setup
+    echo "  Preparing the server with the latest software and security patches."
+    echo ""
     update_system
     create_user
 
@@ -741,6 +743,9 @@ server_main() {
     chmod 700 "/home/$NEW_USER/.ssh"
     chmod 600 "/home/$NEW_USER/.ssh/authorized_keys"
 
+    echo ""
+    echo "  Locking down the server so only you can access it."
+    echo ""
     setup_ssh_hardening
     setup_firewall
     setup_fail2ban
@@ -748,6 +753,9 @@ server_main() {
     setup_auto_updates
 
     # Package managers & tools
+    echo ""
+    echo "  Installing the tools OpenClaw needs to run."
+    echo ""
     install_homebrew
     install_node
     [ "$INSTALL_DOCKER" = true ] && install_docker || warn "Docker install failed — skipping"
